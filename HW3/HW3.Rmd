@@ -1,12 +1,12 @@
 ---
-title: "HW3"
+title: "HW3: Model Selection"
 author: "Angel Sarmiento"
 date: "2/17/2020"
 output: pdf_document
 ---
 
 ```{r setup, include=FALSE }
-knitr::opts_chunk$set(echo = TRUE, comment = NA, message = TRUE)
+knitr::opts_chunk$set(echo = FALSE, comment = NA, message = FALSE, warning = FALSE)
 ```
 
 ```{r, message = FALSE}
@@ -360,7 +360,6 @@ lm_model_cv7 <- train(y ~ lag(y, 3),  data = train_set2,
                    trControl = train_ct2,
                    method = "lm")
 
-beepr::beep("coin")
 ```
 
 
@@ -422,7 +421,8 @@ data <- read_csv("data.csv") %>% na.omit()
 data[3:6] <- log(data[3:6])
 
 colnames(data)[3:6] <- c("ln_fl_nonfarm", "ln_fl_lf", "ln_us_epr", "ln_fl_bp")
-head(data)
+kable(head(data), format = "latex") %>% 
+  kable_styling(position = "center", latex_options = "striped")
 
 
 ```
