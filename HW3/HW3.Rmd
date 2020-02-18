@@ -1,0 +1,179 @@
+---
+title: "HW3"
+author: "Angel Sarmiento"
+date: "2/17/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message = FALSE}
+#library Import
+library(caret)
+library(tidyverse)
+
+library(fable)
+library(feasts)
+library(fredr)
+
+```
+
+```{r}
+#creating the tibble/dataframe with 30 observations
+tsdf <- tibble(ts_index = c(1:30), r = rnorm(30))
+
+tsdf$y <- 0
+
+#logic that doesnt really work, but sets the y values according to a funciton with 3 lags
+tsdf <- tsdf %>%
+  mutate(y = ifelse(ts_index < 4, r,
+            y = 0.5 + 0.5*lag(y,1) - 0.1*lag(y, 2) + 0.25*lag(y, 3) + r))
+
+#replacing rows 1 through 3 with the associated r values 
+tsdf[1:3,3] <- tsdf[1:3,2]
+
+```
+
+```{r}
+#making 7 different possible Autoregressive models (1, 2, 3) using loocv in caret 
+train_ct1 <- trainControl(method = "LOOCV")
+
+# 1,2,3 lag structure
+lm_model1 <- train(y ~ lag(y) + lag(y, 2) + lag(y, 3),  data = tsdf,
+                   na.action = na.pass,
+                   trControl = train_ct1,
+                   method = "lm")
+# 1 2 lag structure
+lm_model2 <- train(y ~ lag(y) +  lag(y, 2),  data = tsdf,
+                   na.action = na.pass,
+                   trControl = train_ct1,
+                   method = "lm")
+# 1 3 lag structure
+lm_model3 <- train(y ~ lag(y) + lag(y, 3),  data = tsdf,
+                   na.action = na.pass,
+                   trControl = train_ct1,
+                   method = "lm")
+
+lm_model4 <- train(y ~ lag(y, 2) + lag(y, 3),  data = tsdf,
+                   na.action = na.pass,
+                   trControl = train_ct1,
+                   method = "lm")
+
+lm_model5 <- train(y ~ lag(y),  data = tsdf,
+                   na.action = na.pass,
+                   trControl = train_ct1,
+                   method = "lm")
+
+lm_model6 <- train(y ~ lag(y, 2),  data = tsdf,
+                   na.action = na.pass,
+                   trControl = train_ct1,
+                   method = "lm")
+
+lm_model7 <- train(y ~ lag(y, 3),  data = tsdf,
+                   na.action = na.pass,
+                   trControl = train_ct1,
+                   method = "lm")
+
+beepr::beep("coin")
+
+```
+
+```{r}
+
+#binding all of the results by rows into one matrix 
+results_matrix <- as_tibble(bind_rows(lm_model1$results, 
+                              lm_model2$results,
+                              lm_model3$results,
+                              lm_model4$results,
+                              lm_model5$results,
+                              lm_model6$results,
+                              lm_model7$results))
+results_matrix[,1] <- NULL
+  
+#Matrix of the AIC values
+AIC_matrix <- AIC(lm_model1$finalModel, lm_model2$finalModel, lm_model3$finalModel, 
+            lm_model4$finalModel, lm_model5$finalModel, lm_model6$finalModel, lm_model7$finalModel)
+#Removing the first column
+AIC_matrix[,1] <- NULL
+
+BIC_matrix <- BIC(lm_model1$finalModel, lm_model2$finalModel, lm_model3$finalModel, 
+            lm_model4$finalModel, lm_model5$finalModel, lm_model6$finalModel, lm_model7$finalModel)
+
+#removing the first column
+BIC_matrix[,1] <- NULL
+
+#appending them to the results matrix
+results_matrix['AIC'] <- AIC_matrix
+results_matrix['BIC'] <- BIC_matrix
+```
+
+```{r}
+#similar cross-validation to above, except using k-folds
+
+
+#making 7 different possible Autoregressive models (1, 2, 3) using loocv in caret 
+train_ct2 <- trainControl(method = "cv", number = 10)
+
+# Creating a training set using 80% of the data
+inTrain <- createDataPartition(y = tsdf$y, p = 0.8, list = FALSE)
+
+#training data
+train_set <- tsdf[inTrain, ]
+#test data (with the other 20 percent)
+test_set <- tsdf[-inTrain, ]
+
+
+
+
+# 1,2,3 lag structure
+lm_model_cv1 <- train(y ~ lag(y) + lag(y, 2) + lag(y, 3),  data = train_set,
+                   na.action = na.pass,
+                   trControl = train_ct2,
+                   method = "lm")
+# 1 2 lag structure
+lm_model_cv2 <- train(y ~ lag(y) +  lag(y, 2),  data = train_set,
+                   na.action = na.pass,
+                   trControl = train_ct2,
+                   method = "lm")
+# 1 3 lag structure
+lm_model_cv3 <- train(y ~ lag(y) + lag(y, 3),  data = train_set,
+                   na.action = na.pass,
+                   trControl = train_ct2,
+                   method = "lm")
+
+lm_model_cv4 <- train(y ~ lag(y, 2) + lag(y, 3),  data = train_set,
+                   na.action = na.pass,
+                   trControl = train_ct2,
+                   method = "lm")
+
+lm_model_cv5 <- train(y ~ lag(y),  data = train_set,
+                   na.action = na.pass,
+                   trControl = train_ct2,
+                   method = "lm")
+
+lm_model_cv6 <- train(y ~ lag(y, 2),  data = train_set,
+                   na.action = na.pass,
+                   trControl = train_ct2,
+                   method = "lm")
+
+lm_model_cv7 <- train(y ~ lag(y, 3),  data = train_set,
+                   na.action = na.pass,
+                   trControl = train_ct2,
+                   method = "lm")
+
+beepr::beep("coin")
+```
+
+
+```{r}
+#Getting the results and appending them to the same matrix as before
+
+
+```
+
+
+
+
+
