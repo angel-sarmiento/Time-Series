@@ -17,6 +17,7 @@ library(tidyverse)
 library(fable)
 library(feasts)
 library(fredr)
+set.seed(23)
 
 ```
 
@@ -75,9 +76,6 @@ lm_model7 <- train(y ~ lag(y, 3),  data = tsdf,
                    na.action = na.pass,
                    trControl = train_ct1,
                    method = "lm")
-
-beepr::beep("coin")
-
 ```
 
 ```{r}
@@ -94,12 +92,12 @@ results_matrix[,1] <- NULL
   
 #Matrix of the AIC values
 AIC_matrix <- AIC(lm_model1$finalModel, lm_model2$finalModel, lm_model3$finalModel, 
-            lm_model4$finalModel, lm_model5$finalModel, lm_model6$finalModel, lm_model7$finalModel)
+                  lm_model4$finalModel, lm_model5$finalModel, lm_model6$finalModel, lm_model7$finalModel)
 #Removing the first column
 AIC_matrix[,1] <- NULL
 
 BIC_matrix <- BIC(lm_model1$finalModel, lm_model2$finalModel, lm_model3$finalModel, 
-            lm_model4$finalModel, lm_model5$finalModel, lm_model6$finalModel, lm_model7$finalModel)
+                  lm_model4$finalModel, lm_model5$finalModel, lm_model6$finalModel, lm_model7$finalModel)
 
 #removing the first column
 BIC_matrix[,1] <- NULL
@@ -117,48 +115,48 @@ results_matrix['BIC'] <- BIC_matrix
 train_ct2 <- trainControl(method = "cv", number = 10)
 
 # Creating a training set using 80% of the data
-inTrain <- createDataPartition(y = tsdf$y, p = 0.8, list = FALSE)
+inTrain2 <- createDataPartition(y = tsdf$y, p = 0.8, list = FALSE)
 
 #training data
-train_set <- tsdf[inTrain, ]
+train_set2 <- tsdf[inTrain2, ]
 #test data (with the other 20 percent)
-test_set <- tsdf[-inTrain, ]
+test_set2 <- tsdf[-inTrain2, ]
 
 
 
 
 # 1,2,3 lag structure
-lm_model_cv1 <- train(y ~ lag(y) + lag(y, 2) + lag(y, 3),  data = train_set,
+lm_model_cv1 <- train(y ~ lag(y) + lag(y, 2) + lag(y, 3),  data = train_set2,
                    na.action = na.pass,
                    trControl = train_ct2,
                    method = "lm")
 # 1 2 lag structure
-lm_model_cv2 <- train(y ~ lag(y) +  lag(y, 2),  data = train_set,
+lm_model_cv2 <- train(y ~ lag(y) +  lag(y, 2),  data = train_set2,
                    na.action = na.pass,
                    trControl = train_ct2,
                    method = "lm")
 # 1 3 lag structure
-lm_model_cv3 <- train(y ~ lag(y) + lag(y, 3),  data = train_set,
+lm_model_cv3 <- train(y ~ lag(y) + lag(y, 3),  data = train_set2,
                    na.action = na.pass,
                    trControl = train_ct2,
                    method = "lm")
 
-lm_model_cv4 <- train(y ~ lag(y, 2) + lag(y, 3),  data = train_set,
+lm_model_cv4 <- train(y ~ lag(y, 2) + lag(y, 3),  data = train_set2,
                    na.action = na.pass,
                    trControl = train_ct2,
                    method = "lm")
 
-lm_model_cv5 <- train(y ~ lag(y),  data = train_set,
+lm_model_cv5 <- train(y ~ lag(y),  data = train_set2,
                    na.action = na.pass,
                    trControl = train_ct2,
                    method = "lm")
 
-lm_model_cv6 <- train(y ~ lag(y, 2),  data = train_set,
+lm_model_cv6 <- train(y ~ lag(y, 2),  data = train_set2,
                    na.action = na.pass,
                    trControl = train_ct2,
                    method = "lm")
 
-lm_model_cv7 <- train(y ~ lag(y, 3),  data = train_set,
+lm_model_cv7 <- train(y ~ lag(y, 3),  data = train_set2,
                    na.action = na.pass,
                    trControl = train_ct2,
                    method = "lm")
@@ -170,10 +168,38 @@ beepr::beep("coin")
 ```{r}
 #Getting the results and appending them to the same matrix as before
 
+models <- c(lm_model_cv1, lm_model_cv2, lm_model_cv3, 
+            lm_model_cv4, lm_model_cv5, lm_model_cv6, lm_model_cv7)
+
+predictions1 <- predict(lm_model_cv1, test_set2)
+predictions2 <- predict(lm_model_cv2, test_set2)
+predictions3 <- predict(lm_model_cv3, test_set2)
+predictions4 <- predict(lm_model_cv4, test_set2)
+predictions5 <- predict(lm_model_cv5, test_set2)
+predictions6 <- predict(lm_model_cv6, test_set2)
+predictions7 <- predict(lm_model_cv7, test_set2)
+
+#post prediction resampling 
+newdata1 <- postResample(predictions1, test_set2$y)
+newdata2 <- postResample(predictions2, test_set2$y)
+newdata3 <- postResample(predictions3, test_set2$y)
+newdata4 <- postResample(predictions4, test_set2$y)
+newdata5 <- postResample(predictions5, test_set2$y)
+newdata6 <- postResample(predictions6, test_set2$y)
+newdata7 <- postResample(predictions7, test_set2$y)
+
+
+#creating a new matrix and binding the RMSE values
+results2 <- rbind(newdata1, newdata2, newdata3, newdata4, newdata5, newdata6, newdata7) %>% 
+  as.data.frame() %>% 
+  subset(select = RMSE)
+
+  
+#Binding it to the original matrix
+results_matrix <- cbind(results_matrix, results2)
+
+#renaming the columns
+colnames(results_matrix)[6] <- "k_RMSE"
 
 ```
-
-
-
-
 
