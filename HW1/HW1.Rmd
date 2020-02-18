@@ -1,0 +1,1240 @@
+---
+title: "FRED Investigation into Nonfarm jobs in Florida"
+author: "Angel Sarmiento"
+subtitle: "Time Series Modeling and Forecasting"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+
+
+
+
+# Introduction
+There are multiple factors that contribute to rises and declines in Nonfarm Employment in Florida. In that regard, this is an investigation on several factors and their proposed effects on the total number of nonfarm jobs in the Florida Job market. In this investigation, a list of variables from FRED (Federal Reserve Economic Database) will function as independent variables for the dependent variable of nonfarm jobs. These variables are: Civilian Labor Force in Florida (fl_lf), New Private Housing Units Authorized by Building Permits for Florida (fl_bp), US Employment Population Ratio: 25 - 54 years (us_epr25to54). All of these variables are monthly non-seasonally adjusted and require multiple modifications to build models that can actually display the significance in relationships between the variables.
+
+# Importing and Wrangling the data
+Importing the data involves a number of functions that will be shown below. The *kable* library in R will be used to generate nice tables to show the regression outputs of the multiple models used in this investigation. All of the codebase will be in STATA.
+```{r load-packages, include=FALSE}
+#preliminary imports for interacting with data
+library(kableExtra)
+library(tidyverse)
+```
+
+```{r, eval=FALSE}
+clear 
+set more off
+# Importing the data
+cd "/Users/angelsarmiento/Documents/Graduate/First Year/Time Series/STATA/HW1"
+import delimited "data.csv"
+```
+After importing the data a series of different date variables will be created for further use later. This involves the creation of a monthly time date.
+```{r, eval=FALSE}
+rename date datestring
+gen datec=date(datestring,"YMD")
+gen mdate=mofd(datec)
+format mdate %tm
+tsset mdate
+```
+Converting all string values to Float ignoring NA values.
+```{r, eval=FALSE}
+destring fl_lf, replace ignore("NA")
+destring fl_bp, replace ignore("NA")
+destring us_epr_25to54, replace ignore("NA")
+```
+Creating log versions of the variables 
+```{r, eval=FALSE}
+gen ln_fl_nonfarm = ln(fl_nonfarm)
+gen ln_fl_lf = ln(fl_lf)
+gen ln_fl_bp = ln(fl_bp)
+gen ln_us_epr = ln(us_epr_25to54)
+```
+
+
+# The Static Model
+
+In the interest of hypothesizing the relationship between nonfarm jobs and the other variables, a static model is the first attempt to represent this relationship. The size of Florida's labor force is something that is most likely generally correlated with the number of nonfarm jobs. More people who can work, means more jobs that can and will be filled. The prime age employment to population ratio might be related to total nonfarm jobs in that a larger ratio means more jobs that can be filled and a higher workforce percentage of the population would be able to pursue jobs outside of the farming industries. The other variable, the amount of Florida Building permits would also be positively correlated in a long run sense. A higher amount of approved building permits would mean more more spaces for employment and more people needed to operate in the building. Inversely, a lower number of building permits implies less spaces for work and lower employment in nonfarm jobs. 
+
+```{r, include=FALSE, eval=FALSE}
+twoway (tsline ln_fl_bp) (tsline ln_fl_nonfarm, yaxis(2)) , name(ln_fl_bp), replace
+twoway (tsline ln_fl_lf) (tsline ln_fl_nonfarm, yaxis(2)), name(ln_fl_lf), replace
+twoway (tsline ln_fl_lf) (tsline ln_fl_nonfarm, yaxis(2)), name(ln_us_epr), replace
+```
+
+Developing the static model without accounting for time trends and then following it with another model that accounts for the linear time trend and monthly seasonality. $\beta_n$ is the coefficients, $X_t$ is the variable at time t, $\delta_k$ is the coefficient of the month, $\hat Y$ is the nonfarm detrending with time, and $\hat\beta_n$ is the coefficients for the detrended series.  
+
+$$Y_{nonfarm} = \alpha_0 + \beta_1logX_{lf} + \beta_2logX_{bp} + \beta_3logX_{epr}$$
+```{r, eval=FALSE}
+reg ln_fl_nonfarm ln_fl_lf ln_fl_bp ln_us_epr
+eststo lnnonfarm1
+```
+$$\hat{Y}_{nonfarm} = \hat{\alpha}_0 + \Sigma\hat{\beta}_1logX_{lf, t} + \Sigma\hat{\beta}_2logX_{bp, t} + \Sigma\hat{\beta}_3logX_{epr, t} + \delta_1 Feb_t + \delta_2 Mar_t + ... \delta_k month_t$$
+ where t = 0, 1, 2, 3... and k = 1, 2, 3... 11
+```{r, eval=FALSE}
+gen monthly = month(datec)
+
+reg ln_fl_nonfarm ln_fl_lf ln_fl_bp ln_us_epr i.monthly datec
+eststo lnnonfarm2
+esttab lnnonfarm*
+```
+
+The regression output is shown below.
+```{r, echo=FALSE, warning=FALSE, comment=NA }
+mycolnames <- c(" ", "ln_fl_nonfarm", "ln_nonfarm_detrend")
+
+regression1 <- read_csv("ln_fl_nonfarm_models2.csv", col_types = cols(), na = character()) %>% noquote() %>% replace("=", "") %>% 
+  kable(format = "latex", caption = "Static Model Comparison") %>% 
+  kable_styling(position = "center", latex_options = c("striped", "HOLD_position"))
+regression1
+```
+
+The non-seasonally, non-detrended model shows that every one of the variables is a significant predictor of the number of nonfarm jobs. Viewing the R-squared value shows that 97.9% of the residuals can be explained by each of variables. The seasonally adjusted, detrended model, shows a better picture of the significance. It looks as though the first month and months 4 through 11 are the most significant. However, the all of the log variables have a perfect ($p << 0.05$) of significance which is questionable.
+
+```{r, eval=FALSE, echo=FALSE}
+esttab lnnonfarm* using "ln_fl_nonfarm_models.csv", replace
+```
+
+# Static Model Results
+
+While the regression output shows a promising relationship between the predictors (civilian labor force, Building permits, and prime age employment population ratio) and the response variables (total nonfarm labor), there is no way to tell from the data alone that these are the only variables that are significant. The model shows that every single one of the predictors is significant when a linear time trend and monthly indicators (seasonality) are factored in. There might however be a spurious correlation present as other factors are present in reality which could affect the total nonfarm employee numbers. One such factor is the existence of lags over time, in which the cumulative effects occur in a series over time. This could explain why every variable seems to be a significant predictor. One event occuring over time is the general increase in population. The increase in population can be a source for spurious correlations in the data. It would seem that a more dynamic model can help in this regard.
+
+
+# Finite Distributed Lag Model
+For a more dynamic model, a Finite Distributed lag model can work wonders to account for changes caused by lags in time. These changes over time can be cumulative and acount for the significantly low p-values that have been shown. The first model involves lags up to $h=12$. The second model adjusts the lag model to accomodate a linear time trend and monthly seasonality. **All of the following models are concatenated into one table below**
+
+```{r, eval=FALSE}
+#1st Model
+reg ln_fl_nonfarm l(0/12).(ln_fl_lf ln_fl_bp ln_us_epr) 
+```
+
+```{r, eval=FALSE}
+#2nd Model
+reg ln_fl_nonfarm l(0/12).(ln_fl_lf ln_fl_bp ln_us_epr) datec i.monthly 
+```
+
+Adding the monthly indicator and the time trend seems to function to show that past lags are not significant. The p values of all of the lags are very high but the time trend has a very low p-value. As does the intercept. In the original lag model, some of the lags had singificant p-values. The new lag model also shows that the significance that was found with the original models in Part 3 for each of the variables (other than the building permits) were not actually signicant. The new model shows that the most significant variables are the time trend, the intercept, the month of December, and the log of the florida Building Permits (denoted as ln_fl_bp). This is vastly different than before, where every one of the variables in the analysis was significant. Perhaps a more parsimonious model is necessary.
+
+## Models with More Parsimonious Lag Structure
+This model is chosen because the lags past around lag 4 seem to be more and more insignificant.
+
+```{r, eval=FALSE}
+#3rd Model
+reg ln_fl_nonfarm l(0/3).(ln_fl_lf ln_fl_bp ln_us_epr) datec i.monthly 
+```
+
+This model has much more significance in the months than previous models. The time trend is still significant, as is the intercept. The number of building permits also seems significant so that is going to be adjusted for the next model.
+
+
+The next model is chosen because it may better demonstrate any real relationships between the variables. From the data below, lags past a certain point will make no difference. It may also be important to see if the significance in some vairables can be explained by the data being shortened to just the dates that all of the variables share. It may be that there is some form of bias toward the building permits data because it has a smaller number of  data points than the other 3 variables.
+
+```{r, eval=FALSE}
+#4th Model
+reg ln_fl_nonfarm l(0/4, 8).(ln_fl_lf ln_fl_bp ln_us_epr) datec i.monthly 
+  if tin(1998m1, 2019m11)
+```
+
+```{r, echo=FALSE, warning=FALSE, comment=NA}
+mycolnames <- c(" ", "ln_nonfarm_1st", "ln_nonfarm_2nd", "ln_nonfarm_3rd", "ln_nonfarm_4th")
+
+regression1 <- read_csv("ln_fl_nonfarm_lag_models1.csv", col_types = cols(), na = character()) %>% noquote() %>% replace("=", "") %>% 
+  kable(format = "latex", caption = "Static Model Comparison") %>% 
+  kable_styling(position = "center", latex_options = c("striped", "HOLD_position"), font_size = 7)
+regression1
+```
+
+```{r, echo=FALSE, warning=FALSE, comment=NA}
+mycolnames <- c(" ", "ln_nonfarm_1st", "ln_nonfarm_2nd", "ln_nonfarm_3rd", "ln_nonfarm_4th")
+
+regression1 <- read_csv("ln_fl_nonfarm_lag_models2.csv", col_types = cols(), na = character()) %>% noquote() %>% replace("=", "") %>% 
+  kable(format = "latex", caption = "Static Model Comparison (Cont.)") %>% 
+  kable_styling(position = "center", latex_options = c("striped", "HOLD_position"), font_size = 9)
+regression1
+```
+
+```{r, echo=FALSE, warning=FALSE, comment=NA}
+mycolnames <- c(" ", "ln_nonfarm_1st", "ln_nonfarm_2nd", "ln_nonfarm_3rd", "ln_nonfarm_4th")
+
+regression1 <- read_csv("ln_fl_nonfarm_lag_models3.csv", col_types = cols(), na = character()) %>% noquote() %>% replace("=", "") %>% 
+  kable(format = "latex", caption = "Static Model Comparison (Cont.)") %>% 
+  kable_styling(position = "center", latex_options = c("striped", "HOLD_position"), font_size = 7)
+regression1
+```
+# Conclusion
+
+Given the output of model 4, the hypothesis seems to be correct. The number of building permits is not as significant predictor of the total nonfarm jobs as was originally thought. Some of the months now show lower p-values and the civilian labor force in Florida is more significant in this model. The fourth model still shows that building permits is relatively significant but not as much as the first 3 models. This makes intuitive sense, as to this researcher, the increase in new building permits should not account for a very large amount of job increase.  
+
+There are several problems with this analysis however. First of all, some of the data imports have general formatting issues due to limitations of the software used. To be specific, certain columns are placed in tables when they should not be. Another issue is that all of the variables used in this analysis are variables that may be farcical in concluding meaningful hypotheses from the data. One might assume that any one of these variables might just accumulate naturally over time. The existence of this accumulation, even in completely randomly generated variables, is misleading in analysing correlation as any correlation perceived may be spurious. 
+
+\cleardoublepage
+# Appendix A: Stata Code
+```{}
+
+clear 
+set more off
+
+* Importing the data
+*cd "/Users/angelsarmiento/Documents/Graduate/First Year/Time Series/STATA/HW1"
+
+import delimited "data.csv"
+
+*Creating monthly time date
+rename date datestring
+gen datec=date(datestring,"YMD")
+gen mdate=mofd(datec)
+format mdate %tm
+tsset mdate
+
+*Converting all string values to Float. Ignoring NA values.
+* ALL OF THESE VARIABLES WERE RENAMED IN R
+destring fl_lf, replace ignore("NA")
+destring fl_bp, replace ignore("NA")
+destring us_epr_25to54, replace ignore("NA")
+
+* Creating log versions of the variables 
+gen ln_fl_nonfarm = ln(fl_nonfarm)
+gen ln_fl_lf = ln(fl_lf)
+gen ln_fl_bp = ln(fl_bp)
+gen ln_us_epr = ln(us_epr_25to54)
+
+
+*Creating plots of each of the static models
+*twoway (tsline ln_fl_bp) (tsline ln_fl_nonfarm, yaxis(2)) , name(ln_fl_bp), replace
+*twoway (tsline ln_fl_lf) (tsline ln_fl_nonfarm, yaxis(2)), name(ln_fl_lf), replace
+*twoway (tsline ln_fl_lf) (tsline ln_fl_nonfarm, yaxis(2)), name(ln_us_epr), replace
+
+* this is the regression outputs for all of the variables without 
+* accounting for the time trends
+reg ln_fl_nonfarm ln_fl_lf ln_fl_bp ln_us_epr
+eststo lnnonfarm1
+* this is the regression output for all of the variables using monthly 
+* dates and accounting for time trends
+gen monthly = month(datec)
+
+
+reg ln_fl_nonfarm ln_fl_lf ln_fl_bp ln_us_epr i.monthly datec
+eststo lnnonfarm2
+esttab lnnonfarm*
+
+esttab lnnonfarm* using "ln_fl_nonfarm_models.csv", replace
+
+
+* Finite Distributed Lag Model
+reg ln_fl_nonfarm l(0/12).(ln_fl_lf ln_fl_bp ln_us_epr) 
+eststo nonfarm_lag
+esttab nonfarm_lag
+
+
+reg ln_fl_nonfarm l(0/12).(ln_fl_lf ln_fl_bp ln_us_epr) datec i.monthly 
+eststo nonfarm_lag2
+esttab nonfarm_lag2
+
+
+*more parsimonious models
+
+* This model is chosen because the lags past around lag 4 
+* seem to be more and more insignificant.
+reg ln_fl_nonfarm l(0/3).(ln_fl_lf ln_fl_bp ln_us_epr) datec i.monthly 
+eststo nonfarm_lag3
+esttab nonfarm_lag3
+
+reg ln_fl_nonfarm l(0/4, 8).(ln_fl_lf ln_fl_bp ln_us_epr) datec i.monthly if tin(1998m1, 2019m11)
+eststo nonfarm_lag4
+esttab nonfarm_lag4
+
+
+
+esttab nonfarm_lag* using "ln_fl_nonfarm_lag_models.csv", replace
+
+
+
+
+
+
+
+
+
+```
+
+
+
+\cleardoublepage
+# Appendix B: Log File
+
+```{}
+
+. * Importing the data
+. *cd "/Users/angelsarmiento/Documents/Graduate/First Year/Time Series/STATA/HW1"
+. 
+. import delimited "data.csv"
+file data.csv not found
+r(601);
+
+end of do-file
+
+r(601);
+
+. cd "Z:\Documents\Graduate\First Year\Time Series\STATA\HW1"
+Z:\Documents\Graduate\First Year\Time Series\STATA\HW1
+
+. do "C:\Users\ANGELS~1\AppData\Local\Temp\STD00000000.tmp"
+
+. 
+. clear 
+
+. set more off
+
+. 
+. * Importing the data
+. *cd "/Users/angelsarmiento/Documents/Graduate/First Year/Time Series/STATA/HW1"
+. 
+. import delimited "data.csv"
+(6 vars, 971 obs)
+. 
+. *Creating monthly time date
+. rename date datestring
+
+. gen datec=date(datestring,"YMD")
+
+. gen mdate=mofd(datec)
+
+. format mdate %tm
+
+. tsset mdate
+        time variable:  mdate, 1939m1 to 2019m11
+                delta:  1 month
+
+. 
+. *Converting all string values to Float. Ignoring NA values.
+. * ALL OF THESE VARIABLES WERE RENAMED IN R
+. destring fl_lf, replace ignore("NA")
+fl_lf: characters N A removed; replaced as long
+(444 missing values generated)
+
+. destring fl_bp, replace ignore("NA")
+fl_bp: characters N A removed; replaced as int
+(588 missing values generated)
+
+. destring us_epr_25to54, replace ignore("NA")
+us_epr_25to54: characters N A removed; replaced as double
+(108 missing values generated)
+
+. 
+. * Creating log versions of the variables 
+. gen ln_fl_nonfarm = ln(fl_nonfarm)
+
+. gen ln_fl_lf = ln(fl_lf)
+(444 missing values generated)
+
+. gen ln_fl_bp = ln(fl_bp)
+(588 missing values generated)
+
+. gen ln_us_epr = ln(us_epr_25to54)
+(108 missing values generated)
+
+. 
+. 
+. *Creating plots of each of the static models
+. *twoway (tsline ln_fl_bp) (tsline ln_fl_nonfarm, yaxis(2)) , name(ln_fl_bp), re
+> place
+. *twoway (tsline ln_fl_lf) (tsline ln_fl_nonfarm, yaxis(2)), name(ln_fl_lf), rep
+> lace
+. *twoway (tsline ln_fl_lf) (tsline ln_fl_nonfarm, yaxis(2)), name(ln_us_epr), re
+> place
+. 
+. *this is the regression outputs for all of the variables without accounting for
+>  the time trends
+. reg ln_fl_nonfarm ln_fl_lf ln_fl_bp ln_us_epr
+
+      Source |       SS       df       MS              Number of obs =     383
+-------------+------------------------------           F(  3,   379) = 5929.08
+       Model |  9.96299194     3  3.32099731           Prob > F      =  0.0000
+    Residual |  .212285612   379   .00056012           R-squared     =  0.9791
+-------------+------------------------------           Adj R-squared =  0.9790
+       Total |  10.1752776   382  .026636852           Root MSE      =  .02367
+
+------------------------------------------------------------------------------
+ln_fl_nonf~m |      Coef.   Std. Err.      t    P>|t|     [95% Conf. Interval]
+-------------+----------------------------------------------------------------
+    ln_fl_lf |   1.116008   .0092445   120.72   0.000     1.097831    1.134185
+    ln_fl_bp |   .0441361   .0031709    13.92   0.000     .0379013     .050371
+   ln_us_epr |   .7841122   .0587547    13.35   0.000     .6685861    .8996383
+       _cons |  -12.55897   .3281169   -38.28   0.000    -13.20413   -11.91381
+------------------------------------------------------------------------------
+
+. eststo lnnonfarm1
+
+. * this is the regression output for all of the variables using monthly dates an
+> d accounting for time trends
+. gen monthly = month(datec)
+
+. 
+. 
+. reg ln_fl_nonfarm ln_fl_lf ln_fl_bp ln_us_epr i.monthly datec
+
+      Source |       SS       df       MS              Number of obs =     383
+-------------+------------------------------           F( 15,   367) = 4377.07
+       Model |  10.1187166    15  .674581106           Prob > F      =  0.0000
+    Residual |  .056560959   367  .000154117           R-squared     =  0.9944
+-------------+------------------------------           Adj R-squared =  0.9942
+       Total |  10.1752776   382  .026636852           Root MSE      =  .01241
+
+------------------------------------------------------------------------------
+ln_fl_nonf~m |      Coef.   Std. Err.      t    P>|t|     [95% Conf. Interval]
+-------------+----------------------------------------------------------------
+    ln_fl_lf |   .9157156   .0353178    25.93   0.000      .846265    .9851663
+    ln_fl_bp |   .0350855   .0019056    18.41   0.000     .0313382    .0388327
+   ln_us_epr |   1.235839   .0476196    25.95   0.000     1.142197    1.329481
+             |
+     monthly |
+          2  |    .003118   .0031088     1.00   0.317    -.0029954    .0092313
+          3  |  -.0032324   .0031104    -1.04   0.299    -.0093489     .002884
+          4  |   -.009392   .0031265    -3.00   0.003    -.0155401   -.0032439
+          5  |  -.0212267   .0031366    -6.77   0.000    -.0273947   -.0150587
+          6  |  -.0436098   .0031656   -13.78   0.000    -.0498347   -.0373848
+          7  |  -.0610826   .0031985   -19.10   0.000    -.0673723   -.0547928
+          8  |  -.0443029   .0031562   -14.04   0.000    -.0505094   -.0380965
+          9  |  -.0314803   .0031454   -10.01   0.000    -.0376655   -.0252951
+         10  |    -.02777   .0031675    -8.77   0.000    -.0339988   -.0215412
+         11  |  -.0089755   .0032023    -2.80   0.005    -.0152727   -.0026784
+         12  |      .0008     .00318     0.25   0.802    -.0054533    .0070532
+             |
+       datec |   .0000118   1.81e-06     6.52   0.000     8.24e-06    .0000154
+       _cons |  -11.31772   .4323177   -26.18   0.000    -12.16785   -10.46759
+------------------------------------------------------------------------------
+
+. eststo lnnonfarm2
+
+. esttab lnnonfarm*
+
+--------------------------------------------
+                      (1)             (2)   
+             ln_fl_nonf~m    ln_fl_nonf~m   
+--------------------------------------------
+ln_fl_lf            1.116***        0.916***
+                 (120.72)         (25.93)   
+
+ln_fl_bp           0.0441***       0.0351***
+                  (13.92)         (18.41)   
+
+ln_us_epr           0.784***        1.236***
+                  (13.35)         (25.95)   
+
+1.monthly                               0   
+                                      (.)   
+
+2.monthly                         0.00312   
+                                   (1.00)   
+
+3.monthly                        -0.00323   
+                                  (-1.04)   
+
+4.monthly                        -0.00939** 
+                                  (-3.00)   
+
+5.monthly                         -0.0212***
+                                  (-6.77)   
+
+6.monthly                         -0.0436***
+                                 (-13.78)   
+
+7.monthly                         -0.0611***
+                                 (-19.10)   
+
+8.monthly                         -0.0443***
+                                 (-14.04)   
+
+9.monthly                         -0.0315***
+                                 (-10.01)   
+
+10.monthly                        -0.0278***
+                                  (-8.77)   
+
+11.monthly                       -0.00898** 
+                                  (-2.80)   
+
+12.monthly                       0.000800   
+                                   (0.25)   
+
+datec                           0.0000118***
+                                   (6.52)   
+
+_cons              -12.56***       -11.32***
+                 (-38.28)        (-26.18)   
+--------------------------------------------
+N                     383             383   
+--------------------------------------------
+t statistics in parentheses
+* p<0.05, ** p<0.01, *** p<0.001
+
+. 
+. esttab lnnonfarm* using "ln_fl_nonfarm_models.csv", replace
+(output written to ln_fl_nonfarm_models.csv)
+
+. 
+. 
+. * Finite Distributed Lag Model
+. reg ln_fl_nonfarm l(0/12).(ln_fl_lf ln_fl_bp ln_us_epr) 
+
+      Source |       SS       df       MS              Number of obs =     371
+-------------+------------------------------           F( 39,   331) = 1816.69
+       Model |  8.92677921    39  .228891775           Prob > F      =  0.0000
+    Residual |  .041703887   331  .000125994           R-squared     =  0.9953
+-------------+------------------------------           Adj R-squared =  0.9948
+       Total |   8.9684831   370  .024239144           Root MSE      =  .01122
+
+------------------------------------------------------------------------------
+ln_fl_nonf~m |      Coef.   Std. Err.      t    P>|t|     [95% Conf. Interval]
+-------------+----------------------------------------------------------------
+    ln_fl_lf |
+         --. |   .2388547   .2570827     0.93   0.354    -.2668673    .7445768
+         L1. |   -.000633   .3402865    -0.00   0.999    -.6700299     .668764
+         L2. |   .4273622   .3427384     1.25   0.213    -.2468579    1.101582
+         L3. |   .6595995   .3421484     1.93   0.055      -.01346    1.332659
+         L4. |  -.2547691    .343541    -0.74   0.459    -.9305681      .42103
+         L5. |  -.5306081   .3423735    -1.55   0.122     -1.20411    .1428942
+         L6. |  -.1021488   .3428774    -0.30   0.766    -.7766423    .5723448
+         L7. |   .2086955   .3449754     0.60   0.546    -.4699253    .8873163
+         L8. |  -.1533024   .3506231    -0.44   0.662    -.8430331    .5364283
+         L9. |   .3780145   .3450936     1.10   0.274    -.3008387    1.056868
+        L10. |  -.0002975   .3424737    -0.00   0.999    -.6739969     .673402
+        L11. |    .011717   .3429308     0.03   0.973    -.6628817    .6863157
+        L12. |   .2640682   .2592787     1.02   0.309    -.2459737    .7741101
+             |
+    ln_fl_bp |
+         --. |   .0200186   .0047081     4.25   0.000      .010757    .0292802
+         L1. |    .009102   .0050417     1.81   0.072    -.0008158    .0190197
+         L2. |   .0121479   .0052074     2.33   0.020     .0019041    .0223916
+         L3. |   .0030827   .0053641     0.57   0.566    -.0074693    .0136347
+         L4. |   .0015596   .0053643     0.29   0.771    -.0089929    .0121121
+         L5. |   .0063135   .0054296     1.16   0.246    -.0043675    .0169944
+         L6. |     .00648   .0054768     1.18   0.238    -.0042937    .0172536
+         L7. |   .0021471   .0054253     0.40   0.693    -.0085254    .0128195
+         L8. |  -.0003866   .0054727    -0.07   0.944    -.0111522     .010379
+         L9. |   .0016925   .0054476     0.31   0.756    -.0090238    .0124088
+        L10. |  -.0066535   .0052764    -1.26   0.208    -.0170329     .003726
+        L11. |  -.0037053   .0052177    -0.71   0.478    -.0139693    .0065587
+        L12. |  -.0058999   .0049853    -1.18   0.237    -.0157067     .003907
+             |
+   ln_us_epr |
+         --. |    .776536   .2815287     2.76   0.006      .222725    1.330347
+         L1. |  -.4071616   .3944698    -1.03   0.303    -1.183146    .3688224
+         L2. |  -.3697759   .3917769    -0.94   0.346    -1.140463    .4009107
+         L3. |   -.428252    .389415    -1.10   0.272    -1.194292    .3377884
+         L4. |   .2437774   .3993805     0.61   0.542    -.5418668    1.029422
+         L5. |   1.048525    .400493     2.62   0.009     .2606926    1.836358
+         L6. |    .867988   .3981498     2.18   0.030     .0847649    1.651211
+         L7. |  -.2119943   .3981801    -0.53   0.595     -.995277    .5712883
+         L8. |   .5000648   .4018268     1.24   0.214    -.2903915    1.290521
+         L9. |  -.1814755   .3932542    -0.46   0.645    -.9550683    .5921172
+        L10. |  -.2895834   .3885568    -0.75   0.457    -1.053935    .4747687
+        L11. |   .0899008   .3880226     0.23   0.817    -.6734004    .8532021
+        L12. |  -.5984199   .2689136    -2.23   0.027    -1.127415   -.0694247
+             |
+       _cons |  -14.10868   .2089183   -67.53   0.000    -14.51966   -13.69771
+------------------------------------------------------------------------------
+
+. eststo nonfarm_lag
+
+. esttab nonfarm_lag
+
+----------------------------
+                      (1)   
+             ln_fl_nonf~m   
+----------------------------
+ln_fl_lf            0.239   
+                   (0.93)   
+
+L.ln_fl_lf      -0.000633   
+                  (-0.00)   
+
+L2.ln_fl_lf         0.427   
+                   (1.25)   
+
+L3.ln_fl_lf         0.660   
+                   (1.93)   
+
+L4.ln_fl_lf        -0.255   
+                  (-0.74)   
+
+L5.ln_fl_lf        -0.531   
+                  (-1.55)   
+
+L6.ln_fl_lf        -0.102   
+                  (-0.30)   
+
+L7.ln_fl_lf         0.209   
+                   (0.60)   
+
+L8.ln_fl_lf        -0.153   
+                  (-0.44)   
+
+L9.ln_fl_lf         0.378   
+                   (1.10)   
+
+L10.ln_fl_lf    -0.000297   
+                  (-0.00)   
+
+L11.ln_fl_lf       0.0117   
+                   (0.03)   
+
+L12.ln_fl_lf        0.264   
+                   (1.02)   
+
+ln_fl_bp           0.0200***
+                   (4.25)   
+
+L.ln_fl_bp        0.00910   
+                   (1.81)   
+
+L2.ln_fl_bp        0.0121*  
+                   (2.33)   
+
+L3.ln_fl_bp       0.00308   
+                   (0.57)   
+
+L4.ln_fl_bp       0.00156   
+                   (0.29)   
+
+L5.ln_fl_bp       0.00631   
+                   (1.16)   
+
+L6.ln_fl_bp       0.00648   
+                   (1.18)   
+
+L7.ln_fl_bp       0.00215   
+                   (0.40)   
+
+L8.ln_fl_bp     -0.000387   
+                  (-0.07)   
+
+L9.ln_fl_bp       0.00169   
+                   (0.31)   
+
+L10.ln_fl_bp     -0.00665   
+                  (-1.26)   
+
+L11.ln_fl_bp     -0.00371   
+                  (-0.71)   
+
+L12.ln_fl_bp     -0.00590   
+                  (-1.18)   
+
+ln_us_epr           0.777** 
+                   (2.76)   
+
+L.ln_us_epr        -0.407   
+                  (-1.03)   
+
+L2.ln_us_epr       -0.370   
+                  (-0.94)   
+
+L3.ln_us_epr       -0.428   
+                  (-1.10)   
+
+L4.ln_us_epr        0.244   
+                   (0.61)   
+
+L5.ln_us_epr        1.049** 
+                   (2.62)   
+
+L6.ln_us_epr        0.868*  
+                   (2.18)   
+
+L7.ln_us_epr       -0.212   
+                  (-0.53)   
+
+L8.ln_us_epr        0.500   
+                   (1.24)   
+
+L9.ln_us_epr       -0.181   
+                  (-0.46)   
+
+L10.ln_us_~r       -0.290   
+                  (-0.75)   
+
+L11.ln_us_~r       0.0899   
+                   (0.23)   
+
+L12.ln_us_~r       -0.598*  
+                  (-2.23)   
+
+_cons              -14.11***
+                 (-67.53)   
+----------------------------
+N                     371   
+----------------------------
+t statistics in parentheses
+* p<0.05, ** p<0.01, *** p<0.001
+
+. 
+. 
+. reg ln_fl_nonfarm l(0/12).(ln_fl_lf ln_fl_bp ln_us_epr) datec i.monthly 
+
+      Source |       SS       df       MS              Number of obs =     371
+-------------+------------------------------           F( 51,   319) = 1857.33
+       Model |  8.93838142    51  .175262381           Prob > F      =  0.0000
+    Residual |  .030101677   319  .000094363           R-squared     =  0.9966
+-------------+------------------------------           Adj R-squared =  0.9961
+       Total |   8.9684831   370  .024239144           Root MSE      =  .00971
+
+------------------------------------------------------------------------------
+ln_fl_nonf~m |      Coef.   Std. Err.      t    P>|t|     [95% Conf. Interval]
+-------------+----------------------------------------------------------------
+    ln_fl_lf |
+         --. |    .398954   .2718706     1.47   0.143    -.1359319    .9338399
+         L1. |   -.060362   .3610206    -0.17   0.867    -.7706442    .6499203
+         L2. |   .0361034   .3684202     0.10   0.922    -.6887369    .7609438
+         L3. |   .1096959   .3681739     0.30   0.766      -.61466    .8340518
+         L4. |   .0088468   .3718929     0.02   0.981    -.7228259    .7405194
+         L5. |   .0332763   .3701282     0.09   0.928    -.6949245     .761477
+         L6. |   .1460054   .3698971     0.39   0.693    -.5817407    .8737516
+         L7. |   .1735757   .3700134     0.47   0.639    -.5543992    .9015506
+         L8. |  -.0241833   .3737599    -0.06   0.948    -.7595291    .7111624
+         L9. |   .1097723   .3755356     0.29   0.770    -.6290671    .8486118
+        L10. |   .1565286   .3791518     0.41   0.680    -.5894254    .9024825
+        L11. |  -.2308017   .3789415    -0.61   0.543     -.976342    .5147385
+        L12. |   .0558725   .2862178     0.20   0.845    -.5072406    .6189855
+             |
+    ln_fl_bp |
+         --. |    .017885   .0043544     4.11   0.000     .0093181    .0264519
+         L1. |   .0085614   .0047291     1.81   0.071    -.0007428    .0178656
+         L2. |   .0062937   .0048413     1.30   0.195    -.0032312    .0158187
+         L3. |   .0067312   .0049499     1.36   0.175    -.0030075    .0164698
+         L4. |   .0041435   .0049514     0.84   0.403     -.005598     .013885
+         L5. |   .0038795   .0049423     0.78   0.433    -.0058442    .0136031
+         L6. |   .0048602    .005011     0.97   0.333    -.0049986    .0147191
+         L7. |   .0047119   .0049165     0.96   0.339     -.004961    .0143849
+         L8. |  -.0042013   .0049678    -0.85   0.398    -.0139751    .0055724
+         L9. |  -.0007556   .0049059    -0.15   0.878    -.0104076    .0088964
+        L10. |  -.0005096   .0047748    -0.11   0.915    -.0099036    .0088845
+        L11. |   -.005979   .0046848    -1.28   0.203    -.0151961     .003238
+        L12. |  -.0034119   .0044434    -0.77   0.443     -.012154    .0053301
+             |
+   ln_us_epr |
+         --. |   .4387865   .3485176     1.26   0.209    -.2468968     1.12447
+         L1. |   .1889491   .4625007     0.41   0.683    -.7209879    1.098886
+         L2. |  -.0715753   .4712786    -0.15   0.879    -.9987823    .8556317
+         L3. |   .1848134   .4702766     0.39   0.695    -.7404222    1.110049
+         L4. |   .1573845   .4727168     0.33   0.739     -.772652    1.087421
+         L5. |  -.0987211   .4729464    -0.21   0.835    -1.029209     .831767
+         L6. |   .3065322   .4732293     0.65   0.518    -.6245127    1.237577
+         L7. |   .0339463   .4718891     0.07   0.943    -.8944618    .9623543
+         L8. |   .0443145   .4771704     0.09   0.926    -.8944842    .9831131
+         L9. |  -.0253721   .4757604    -0.05   0.958    -.9613966    .9106524
+        L10. |   .0140092   .4772669     0.03   0.977    -.9249793    .9529977
+        L11. |    .488974   .4739077     1.03   0.303    -.4434054    1.421353
+        L12. |  -.4229569   .3492525    -1.21   0.227    -1.110086    .2641724
+             |
+       datec |   .0000121   1.65e-06     7.29   0.000     8.80e-06    .0000153
+             |
+     monthly |
+          2  |     .00993   .0070268     1.41   0.159    -.0038948    .0237548
+          3  |   .0117641    .007671     1.53   0.126     -.003328    .0268563
+          4  |   .0108275   .0084946     1.27   0.203    -.0058851    .0275401
+          5  |   .0055635   .0060854     0.91   0.361    -.0064092    .0175361
+          6  |  -.0077413   .0074067    -1.05   0.297    -.0223134    .0068308
+          7  |  -.0179781   .0072575    -2.48   0.014    -.0322567   -.0036995
+          8  |  -.0084088   .0076984    -1.09   0.276    -.0235549    .0067373
+          9  |  -.0072233   .0061222    -1.18   0.239    -.0192684    .0048217
+         10  |  -.0045728   .0083469    -0.55   0.584    -.0209947    .0118492
+         11  |   .0094729   .0076324     1.24   0.215    -.0055433    .0244891
+         12  |   .0198697   .0072919     2.72   0.007     .0055234     .034216
+             |
+       _cons |  -11.38017   .4259794   -26.72   0.000    -12.21825   -10.54209
+------------------------------------------------------------------------------
+
+. eststo nonfarm_lag2
+
+. esttab nonfarm_lag2
+
+----------------------------
+                      (1)   
+             ln_fl_nonf~m   
+----------------------------
+ln_fl_lf            0.399   
+                   (1.47)   
+
+L.ln_fl_lf        -0.0604   
+                  (-0.17)   
+
+L2.ln_fl_lf        0.0361   
+                   (0.10)   
+
+L3.ln_fl_lf         0.110   
+                   (0.30)   
+
+L4.ln_fl_lf       0.00885   
+                   (0.02)   
+
+L5.ln_fl_lf        0.0333   
+                   (0.09)   
+
+L6.ln_fl_lf         0.146   
+                   (0.39)   
+
+L7.ln_fl_lf         0.174   
+                   (0.47)   
+
+L8.ln_fl_lf       -0.0242   
+                  (-0.06)   
+
+L9.ln_fl_lf         0.110   
+                   (0.29)   
+
+L10.ln_fl_lf        0.157   
+                   (0.41)   
+
+L11.ln_fl_lf       -0.231   
+                  (-0.61)   
+
+L12.ln_fl_lf       0.0559   
+                   (0.20)   
+
+ln_fl_bp           0.0179***
+                   (4.11)   
+
+L.ln_fl_bp        0.00856   
+                   (1.81)   
+
+L2.ln_fl_bp       0.00629   
+                   (1.30)   
+
+L3.ln_fl_bp       0.00673   
+                   (1.36)   
+
+L4.ln_fl_bp       0.00414   
+                   (0.84)   
+
+L5.ln_fl_bp       0.00388   
+                   (0.78)   
+
+L6.ln_fl_bp       0.00486   
+                   (0.97)   
+
+L7.ln_fl_bp       0.00471   
+                   (0.96)   
+
+L8.ln_fl_bp      -0.00420   
+                  (-0.85)   
+
+L9.ln_fl_bp     -0.000756   
+                  (-0.15)   
+
+L10.ln_fl_bp    -0.000510   
+                  (-0.11)   
+
+L11.ln_fl_bp     -0.00598   
+                  (-1.28)   
+
+L12.ln_fl_bp     -0.00341   
+                  (-0.77)   
+
+ln_us_epr           0.439   
+                   (1.26)   
+
+L.ln_us_epr         0.189   
+                   (0.41)   
+
+L2.ln_us_epr      -0.0716   
+                  (-0.15)   
+
+L3.ln_us_epr        0.185   
+                   (0.39)   
+
+L4.ln_us_epr        0.157   
+                   (0.33)   
+
+L5.ln_us_epr      -0.0987   
+                  (-0.21)   
+
+L6.ln_us_epr        0.307   
+                   (0.65)   
+
+L7.ln_us_epr       0.0339   
+                   (0.07)   
+
+L8.ln_us_epr       0.0443   
+                   (0.09)   
+
+L9.ln_us_epr      -0.0254   
+                  (-0.05)   
+
+L10.ln_us_~r       0.0140   
+                   (0.03)   
+
+L11.ln_us_~r        0.489   
+                   (1.03)   
+
+L12.ln_us_~r       -0.423   
+                  (-1.21)   
+
+datec           0.0000121***
+                   (7.29)   
+
+1.monthly               0   
+                      (.)   
+
+2.monthly         0.00993   
+                   (1.41)   
+
+3.monthly          0.0118   
+                   (1.53)   
+
+4.monthly          0.0108   
+                   (1.27)   
+
+5.monthly         0.00556   
+                   (0.91)   
+
+6.monthly        -0.00774   
+                  (-1.05)   
+
+7.monthly         -0.0180*  
+                  (-2.48)   
+
+8.monthly        -0.00841   
+                  (-1.09)   
+
+9.monthly        -0.00722   
+                  (-1.18)   
+
+10.monthly       -0.00457   
+                  (-0.55)   
+
+11.monthly        0.00947   
+                   (1.24)   
+
+12.monthly         0.0199** 
+                   (2.72)   
+
+_cons              -11.38***
+                 (-26.72)   
+----------------------------
+N                     371   
+----------------------------
+t statistics in parentheses
+* p<0.05, ** p<0.01, *** p<0.001
+
+. 
+. 
+. *more parsimonious models
+. 
+. *This model is chosen because the lags past around lag 4 seem to be more and mo
+> re insignificant.
+. reg ln_fl_nonfarm l(0/3).(ln_fl_lf ln_fl_bp ln_us_epr) datec i.monthly 
+
+      Source |       SS       df       MS              Number of obs =     380
+-------------+------------------------------           F( 24,   355) = 3727.27
+       Model |  9.81947902    24  .409144959           Prob > F      =  0.0000
+    Residual |  .038968607   355  .000109771           R-squared     =  0.9960
+-------------+------------------------------           Adj R-squared =  0.9958
+       Total |  9.85844762   379  .026011735           Root MSE      =  .01048
+
+------------------------------------------------------------------------------
+ln_fl_nonf~m |      Coef.   Std. Err.      t    P>|t|     [95% Conf. Interval]
+-------------+----------------------------------------------------------------
+    ln_fl_lf |
+         --. |   .6766356   .2696997     2.51   0.013     .1462256    1.207046
+         L1. |   .0216692   .3740476     0.06   0.954    -.7139585     .757297
+         L2. |   .0124476   .3802703     0.03   0.974    -.7354181    .7603133
+         L3. |   .1834343   .2750336     0.67   0.505    -.3574657    .7243343
+             |
+    ln_fl_bp |
+         --. |   .0219692   .0043693     5.03   0.000     .0133762    .0305622
+         L1. |   .0099885   .0045519     2.19   0.029     .0010365    .0189406
+         L2. |    .005084   .0045734     1.11   0.267    -.0039104    .0140784
+         L3. |   .0038514    .004499     0.86   0.393    -.0049966    .0126995
+             |
+   ln_us_epr |
+         --. |    .257017    .338193     0.76   0.448    -.4080967    .9221307
+         L1. |   .0060073    .468909     0.01   0.990    -.9161815    .9281961
+         L2. |  -.0172199   .4738445    -0.04   0.971    -.9491152    .9146753
+         L3. |   .9607057   .3379591     2.84   0.005      .296052    1.625359
+             |
+       datec |   .0000129   1.60e-06     8.05   0.000     9.74e-06     .000016
+             |
+     monthly |
+          2  |   .0080382   .0054825     1.47   0.143     -.002744    .0188204
+          3  |   .0112847   .0061912     1.82   0.069    -.0008914    .0234608
+          4  |   .0200366   .0054906     3.65   0.000     .0092384    .0308349
+          5  |   .0095576   .0046154     2.07   0.039     .0004807    .0186345
+          6  |  -.0102312   .0053478    -1.91   0.057    -.0207486    .0002862
+          7  |  -.0293823   .0049313    -5.96   0.000    -.0390805   -.0196841
+          8  |  -.0225581   .0038641    -5.84   0.000    -.0301576   -.0149587
+          9  |  -.0212664   .0036314    -5.86   0.000    -.0284081   -.0141246
+         10  |  -.0178821   .0057128    -3.13   0.002    -.0291172    -.006647
+         11  |   .0030458   .0052768     0.58   0.564    -.0073319    .0134235
+         12  |    .015797     .00408     3.87   0.000      .007773     .023821
+             |
+       _cons |  -10.94204   .3940918   -27.77   0.000    -11.71709     -10.167
+------------------------------------------------------------------------------
+
+. eststo nonfarm_lag3
+
+. esttab nonfarm_lag3
+
+----------------------------
+                      (1)   
+             ln_fl_nonf~m   
+----------------------------
+ln_fl_lf            0.677*  
+                   (2.51)   
+
+L.ln_fl_lf         0.0217   
+                   (0.06)   
+
+L2.ln_fl_lf        0.0124   
+                   (0.03)   
+
+L3.ln_fl_lf         0.183   
+                   (0.67)   
+
+ln_fl_bp           0.0220***
+                   (5.03)   
+
+L.ln_fl_bp        0.00999*  
+                   (2.19)   
+
+L2.ln_fl_bp       0.00508   
+                   (1.11)   
+
+L3.ln_fl_bp       0.00385   
+                   (0.86)   
+
+ln_us_epr           0.257   
+                   (0.76)   
+
+L.ln_us_epr       0.00601   
+                   (0.01)   
+
+L2.ln_us_epr      -0.0172   
+                  (-0.04)   
+
+L3.ln_us_epr        0.961** 
+                   (2.84)   
+
+datec           0.0000129***
+                   (8.05)   
+
+1.monthly               0   
+                      (.)   
+
+2.monthly         0.00804   
+                   (1.47)   
+
+3.monthly          0.0113   
+                   (1.82)   
+
+4.monthly          0.0200***
+                   (3.65)   
+
+5.monthly         0.00956*  
+                   (2.07)   
+
+6.monthly         -0.0102   
+                  (-1.91)   
+
+7.monthly         -0.0294***
+                  (-5.96)   
+
+8.monthly         -0.0226***
+                  (-5.84)   
+
+9.monthly         -0.0213***
+                  (-5.86)   
+
+10.monthly        -0.0179** 
+                  (-3.13)   
+
+11.monthly        0.00305   
+                   (0.58)   
+
+12.monthly         0.0158***
+                   (3.87)   
+
+_cons              -10.94***
+                 (-27.77)   
+----------------------------
+N                     380   
+----------------------------
+t statistics in parentheses
+* p<0.05, ** p<0.01, *** p<0.001
+
+. 
+. reg ln_fl_nonfarm l(0/4, 8).(ln_fl_lf ln_fl_bp ln_us_epr) datec i.monthly if ti
+> n(1998m1, 2019m11)
+
+      Source |       SS       df       MS              Number of obs =     263
+-------------+------------------------------           F( 30,   232) =  842.21
+       Model |  1.67773399    30  .055924466           Prob > F      =  0.0000
+    Residual |  .015405278   232  .000066402           R-squared     =  0.9909
+-------------+------------------------------           Adj R-squared =  0.9897
+       Total |  1.69313927   262  .006462364           Root MSE      =  .00815
+
+------------------------------------------------------------------------------
+ln_fl_nonf~m |      Coef.   Std. Err.      t    P>|t|     [95% Conf. Interval]
+-------------+----------------------------------------------------------------
+    ln_fl_lf |
+         --. |   .5379549   .2640614     2.04   0.043     .0176901     1.05822
+         L1. |  -.0131634   .3620392    -0.04   0.971    -.7264682    .7001414
+         L2. |  -.0173824   .3718019    -0.05   0.963    -.7499222    .7151574
+         L3. |   .3094965   .3713038     0.83   0.405    -.4220618    1.041055
+         L4. |   .0242732    .305861     0.08   0.937     -.578347    .6268934
+         L8. |  -.1324231   .1442353    -0.92   0.360    -.4166015    .1517554
+             |
+    ln_fl_bp |
+         --. |   .0099823   .0041221     2.42   0.016     .0018607    .0181038
+         L1. |   .0083077   .0043457     1.91   0.057    -.0002544    .0168699
+         L2. |    .003858   .0045149     0.85   0.394    -.0050375    .0127535
+         L3. |   .0056752   .0044789     1.27   0.206    -.0031493    .0144997
+         L4. |    .004619    .004368     1.06   0.291     -.003987    .0132249
+         L8. |   .0135956   .0037495     3.63   0.000     .0062082     .020983
+             |
+   ln_us_epr |
+         --. |    .126399   .3483614     0.36   0.717    -.5599572    .8127552
+         L1. |   .3191415   .4681803     0.68   0.496    -.6032871     1.24157
+         L2. |   .1489425   .4809766     0.31   0.757    -.7986978    1.096583
+         L3. |   -.118788   .4807789    -0.25   0.805    -1.066039    .8284627
+         L4. |   .1851347   .3952589     0.47   0.640    -.5936211    .9638904
+         L8. |   .3211695   .1668264     1.93   0.055    -.0075189    .6498579
+             |
+       datec |    .000017   1.50e-06    11.29   0.000      .000014    .0000199
+             |
+     monthly |
+          2  |   .0078204   .0052919     1.48   0.141    -.0026059    .0182467
+          3  |   .0124008   .0065538     1.89   0.060    -.0005117    .0253133
+          4  |   .0090886   .0072926     1.25   0.214    -.0052797    .0234568
+          5  |   .0065625   .0051037     1.29   0.200     -.003493    .0166181
+          6  |  -.0121185   .0056892    -2.13   0.034    -.0233277   -.0009094
+          7  |  -.0230236   .0051011    -4.51   0.000    -.0330741   -.0129731
+          8  |  -.0130314   .0044426    -2.93   0.004    -.0217844   -.0042784
+          9  |  -.0098293   .0039674    -2.48   0.014    -.0176461   -.0020125
+         10  |  -.0034589   .0059354    -0.58   0.561    -.0151531    .0082354
+         11  |   .0065546   .0056717     1.16   0.249      -.00462    .0177292
+         12  |   .0135055   .0046267     2.92   0.004     .0043899    .0226211
+             |
+       _cons |  -7.172393   .5334589   -13.45   0.000    -8.223437    -6.12135
+------------------------------------------------------------------------------
+
+. eststo nonfarm_lag4
+
+. esttab nonfarm_lag4
+
+----------------------------
+                      (1)   
+             ln_fl_nonf~m   
+----------------------------
+ln_fl_lf            0.538*  
+                   (2.04)   
+
+L.ln_fl_lf        -0.0132   
+                  (-0.04)   
+
+L2.ln_fl_lf       -0.0174   
+                  (-0.05)   
+
+L3.ln_fl_lf         0.309   
+                   (0.83)   
+
+L4.ln_fl_lf        0.0243   
+                   (0.08)   
+
+L8.ln_fl_lf        -0.132   
+                  (-0.92)   
+
+ln_fl_bp          0.00998*  
+                   (2.42)   
+
+L.ln_fl_bp        0.00831   
+                   (1.91)   
+
+L2.ln_fl_bp       0.00386   
+                   (0.85)   
+
+L3.ln_fl_bp       0.00568   
+                   (1.27)   
+
+L4.ln_fl_bp       0.00462   
+                   (1.06)   
+
+L8.ln_fl_bp        0.0136***
+                   (3.63)   
+
+ln_us_epr           0.126   
+                   (0.36)   
+
+L.ln_us_epr         0.319   
+                   (0.68)   
+
+L2.ln_us_epr        0.149   
+                   (0.31)   
+
+L3.ln_us_epr       -0.119   
+                  (-0.25)   
+
+L4.ln_us_epr        0.185   
+                   (0.47)   
+
+L8.ln_us_epr        0.321   
+                   (1.93)   
+
+datec           0.0000170***
+                  (11.29)   
+
+1.monthly               0   
+                      (.)   
+
+2.monthly         0.00782   
+                   (1.48)   
+
+3.monthly          0.0124   
+                   (1.89)   
+
+4.monthly         0.00909   
+                   (1.25)   
+
+5.monthly         0.00656   
+                   (1.29)   
+
+6.monthly         -0.0121*  
+                  (-2.13)   
+
+7.monthly         -0.0230***
+                  (-4.51)   
+
+8.monthly         -0.0130** 
+                  (-2.93)   
+
+9.monthly        -0.00983*  
+                  (-2.48)   
+
+10.monthly       -0.00346   
+                  (-0.58)   
+
+11.monthly        0.00655   
+                   (1.16)   
+
+12.monthly         0.0135** 
+                   (2.92)   
+
+_cons              -7.172***
+                 (-13.45)   
+----------------------------
+N                     263   
+----------------------------
+t statistics in parentheses
+* p<0.05, ** p<0.01, *** p<0.001
+
+```
+
+
+
+
+
+
+
+
+
+
+
