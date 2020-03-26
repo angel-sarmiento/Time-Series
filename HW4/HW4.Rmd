@@ -1,0 +1,286 @@
+---
+title: 'Investigation 4: Forecasting Nonfarm Employment'
+author: "Angel Sarmiento"
+date: "3/24/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, comment = NA, message = FALSE, warning = FALSE, dev = 'pdf')
+```
+
+```{r}
+#library Import
+library(caret)
+library(tidyverse)
+
+library(fable)
+library(feasts)
+library(fredr)
+library(tsibble)
+library(patchwork)
+library(kableExtra)
+library(ggfortify)
+
+set.seed(23)
+```
+
+# Introduction
+
+This investigation is a continuation of the previous one focused on model selection given multiple criteria. In this investigation, forecasting of nonfarm employment will be done after training the model of subsets of the data and finding the most important variables. The four models from the last investigation are used here for this purpose and compared with their respective out-of-sample RMSEs. After comparing these models, the predictions for actual nonfarm employment will be found, to demonstrate the predictive powers of the models.  
+
+\qquad After model selection, naturally the next step is to generate point and interval forecasts of future data that is not found in the original data. 
+
+
+```{r}
+#importing the data
+data <- read_csv("data.csv") %>% na.omit() 
+
+data <- data[order(data$DATE, decreasing = TRUE),]
+
+
+data[3:6] <- log(data[3:6])
+data[,1] <- NULL
+
+colnames(data)[2:5] <- c("ln_fl_nonfarm", "ln_fl_lf", "ln_us_epr", "ln_fl_bp")
+
+months <- yearmonth(data$DATE) %>% 
+  format(format = "%m") %>% 
+  as.factor()
+data['months'] <- months
+
+data2 <- data
+```
+
+# Model Selection
+
+From the last investigation, four ARDL models were created with the intention of having the best possible fit to the data. Now, they will be repurposed for prediction. The four different models are as follows:
+
+\begin{equation}
+  \Delta y_{t} = \beta_0 + \sum\limits_{(a,l) = 0}^{12} \beta_a L_l \Delta y_{t-1} + \sum\limits_{b,k}^{12} \beta_b L_k \Delta X_{lf, t} + \sum\limits_{c,k}^{12} \beta_c L_k \Delta X_{bp, t} + \sum\limits_{d,k}^{12} \beta_d L_k \Delta X_{epr, t} + \beta_e X_m + DATE + \varepsilon_t 
+\end{equation}
+
+Where *DATE* is a time trend, $k = 0, 1, 2, 3, ... 12$, $l = 1, 2, 3, ... 12$, $m$ is the month from $1, 2, 3, ... 12$, and $L$ is the lag. 
+
+\begin{equation}
+\Delta y_{t} = \beta_0 + \sum\limits_{(a,l) = 0}^{12} \beta_a L_l \Delta y_{t-1} + \sum\limits_{b,k}^{2} \beta_b L_k \Delta X_{lf, t} + \sum\limits_{c,k}^{2} \beta_c L_k \Delta X_{bp, t} + \sum\limits_{d,k}^{2} \beta_d L_k \Delta X_{epr, t} + \beta_e X_m + DATE + \varepsilon_t 
+\end{equation}
+
+Where *DATE* is a time trend, $k = 0, 1, 2$, $l = 1, 2, 3, ... 12$, $m$ is the month from $1, 2, 3, ... 12$, and $L_k$ is the lag at value $k$ or $l$. 
+
+\begin{equation}
+\Delta y_{t} = \beta_0 + \sum\limits_{(a,l) = 0}^{12} \beta_a L_l \Delta y_{t-1} + \sum\limits_{b,k}^{2, 12} \beta_b L_k \Delta X_{lf, t} + \sum\limits_{c,k}^{2, 12} \beta_c L_k \Delta X_{bp, t} + \sum\limits_{d,k}^{2, 12} \beta_d L_k \Delta X_{epr, t} + \beta_e X_m + DATE + \varepsilon_t
+\end{equation}
+
+Where *DATE* is a time trend, $k = 0, 1, 2\ or\ 12$, $l = 1, 2, 3, ... 12$, $m$ is the month from $1, 2, 3, ... 12$, and $L_k$ is the lag at value $k$ or $l$. 
+
+\begin{equation}
+\Delta y_{t} = \beta_0 + \sum\limits_{(a,l) = 0}^{12, 24} \beta_a L_l \Delta y_{t-1} + \sum\limits_{b,k}^{2, 12, 24} \beta_b L_k \Delta X_{lf, t} + \sum\limits_{c,k}^{2, 12, 24} \beta_c L_k \Delta X_{bp, t} + \sum\limits_{d,k}^{2, 12, 24} \beta_d L_k \Delta X_{epr, t} + \beta_e X_m + \varepsilon_t
+\end{equation}
+
+```{r}
+#Making the four different models
+#creating a new dataframe 
+#FIRST MODEL
+data['d.nonfarm'] <- difference(data$ln_fl_nonfarm, differences = 1)
+data['d.nonfarm_lag'] <- difference(data$ln_fl_nonfarm, lag = 12, difference = 1)
+data['d.lf_lag'] <- difference(data$ln_fl_lf, lag = 12, differences = 1) 
+data['d.fl_bp_lag'] <- difference(data$ln_fl_bp, lag = 12, differences = 1)
+data['d.usepr'] <- difference(data$ln_us_epr, lag = 12, differences = 1) 
+```
+
+```{r, warning = FALSE}
+#LOOCV
+model_1 <- train(d.nonfarm ~ d.nonfarm_lag + d.lf_lag + d.fl_bp_lag + d.usepr + months + DATE, 
+                 na.action = na.exclude, 
+                 data = data,
+                 trControl = trainControl(method = "LOOCV"),
+                 method = "lm")
+
+#writing results to final table
+final_results <- rbind(model_1$results)
+
+
+```
+
+```{r, warning = FALSE}
+#SECOND MODEL
+#changing the lag structure
+data['d.lf_lag_2'] <- difference(data$ln_fl_lf, lag = 2, differences = 1) 
+data['d.fl_bp_lag_2'] <- difference(data$ln_fl_bp, lag = 2, differences = 1)
+data['d.usepr_2'] <- difference(data$ln_us_epr, lag = 2, differences = 1) 
+
+
+model_2 <- train(d.nonfarm ~ d.nonfarm_lag + d.lf_lag_2 + d.fl_bp_lag_2 + d.usepr_2 + months + DATE, 
+                 na.action = na.exclude, 
+                 data = data,
+                 trControl = trainControl(method = "LOOCV"),
+                 method = "lm")
+
+final_results <- rbind(final_results, model_2$results)
+
+```
+
+```{r, warning = FALSE}
+#THIRD MODEL
+data['d.lf_lag_2'] <- difference(data$ln_fl_lf, lag = 2, differences = 1) 
+data['d.lf_lag_12'] <- difference(data$ln_fl_lf, lag = 12, differences = 1)
+data['d.fl_bp_lag_2'] <- difference(data$ln_fl_bp, lag = 2, differences = 1)
+data['d.fl_bp_12'] <- difference(data$ln_fl_bp, lag = 12, differences = 1)
+data['d.usepr_2'] <- difference(data$ln_us_epr, lag = 2, differences = 1) 
+data['d.usepr_12'] <- difference(data$ln_us_epr, lag = 12, differences = 1)
+
+#LOOCV
+model_3 <- train(d.nonfarm ~ d.nonfarm_lag + d.lf_lag_2 + d.lf_lag_12 + d.fl_bp_lag_2 + d.fl_bp_12 + d.usepr_12 + d.usepr_2 + months + DATE, 
+                 na.action = na.exclude, 
+                 data = data,
+                 trControl = trainControl(method = "LOOCV"),
+                 method = "lm")
+
+#writing results to final table
+
+final_results <- rbind(final_results, model_3$results)
+```
+
+```{r, warning = FALSE}
+#FOURTH MODEL
+data['d.nonfarm_lag_24'] <- difference(data$ln_fl_nonfarm, lag = 24, difference = 1)
+data['d.lf_lag_2'] <- difference(data$ln_fl_lf, lag = 2, differences = 1) 
+data['d.lf_lag_12'] <- difference(data$ln_fl_lf, lag = 12, differences = 1)
+data['d.lf_lag_24'] <- difference(data$ln_fl_lf, lag = 24, differences = 1)
+data['d.fl_bp_lag_2'] <- difference(data$ln_fl_bp, lag = 2, differences = 1)
+data['d.fl_bp_12'] <- difference(data$ln_fl_bp, lag = 12, differences = 1)
+data['d.fl_bp_24'] <- difference(data$ln_fl_bp, lag = 24, differences = 1)
+data['d.usepr_2'] <- difference(data$ln_us_epr, lag = 2, differences = 1) 
+data['d.usepr_12'] <- difference(data$ln_us_epr, lag = 12, differences = 1)
+data['d.usepr_24'] <- difference(data$ln_us_epr, lag = 24, differences = 1)
+
+#LOOCV
+model_4 <- train(d.nonfarm ~ d.nonfarm_lag + d.nonfarm_lag_24 + d.lf_lag_2 + d.lf_lag_12 + d.lf_lag_24 + 
+                   d.fl_bp_lag_2 + d.fl_bp_12 + d.fl_bp_24 + d.usepr_2 + d.usepr_12 + d.usepr_24 + months, 
+                 na.action = na.exclude, 
+                 data = data,
+                 trControl = trainControl(method = "LOOCV"),
+                 method = "lm")
+
+#writing results to final table
+
+final_results <- rbind(final_results, model_4$results)
+```
+
+```{r}
+final_results[,1] <- NULL
+  
+#Matrix of the AIC values
+AIC_final <- AIC(model_1$finalModel, model_2$finalModel, model_3$finalModel, 
+                  model_4$finalModel)
+#Removing the first column
+AIC_final[,1] <- NULL
+
+BIC_final <- BIC(model_1$finalModel, model_2$finalModel, model_3$finalModel, 
+                  model_4$finalModel)
+
+#removing the first column
+BIC_final[,1] <- NULL
+
+#appending them to the results matrix
+final_results['AIC'] <- AIC_final
+final_results['BIC'] <- BIC_final
+final_results['k-fold'] <- c(0.00435401,	0.004178055,	0.00427015,	0.00422084)
+
+#adding rownames
+row.names(final_results) <- c("Model 1", "Model 2", "Model 3", "Model 4")
+
+kable(final_results, format = "latex") %>% 
+  kable_styling(position = "center", latex_options = "striped")
+
+```
+\begin{center}
+Table 1. Model Comparison for Nonfarm employment using LOOCV 
+\end{center}
+
+From these results, it was concluded that model 2 was the best model due to its relative parsimony and good performance in comparison with the other models. Model 2 explained a great amount of the variance while having a low RMSE as well as AIC and BIC. The plots of these models' performances were then shown as below. 
+
+```{r}
+results_final <- data.frame(cbind(predictions = model_1$pred[,1], observations = model_1$pred[,2]))
+
+model_final_1 <- ggplot(results_final, aes(predictions, observations)) +
+      geom_point(color = "orange", alpha = 0.5) + 
+      geom_smooth(method = "lm", colour = "black")+ ggtitle('Model 1') +
+      ggtitle("Model 1") +
+      xlab("Predicted") +
+      ylab("Observed") +
+      theme(plot.title = element_text(color="black",size=12,hjust = 0.5))
+
+
+results_final_2 <- data.frame(cbind(predictions = model_2$pred[,1], observations = model_2$pred[,2]))
+
+model_final_2 <- ggplot(results_final_2, aes(predictions, observations)) +
+      geom_point(color = "darkred", alpha = 0.5) + 
+      geom_smooth(method = "lm", colour = "black")+ ggtitle('Model 1') +
+      ggtitle("Model 2") +
+      xlab("Predicted") +
+      ylab("Observed") +
+      theme(plot.title = element_text(color="black",size=12,hjust = 0.5))
+
+results_final_3 <- data.frame(cbind(predictions = model_3$pred[,1], observations = model_3$pred[,2]))
+
+model_final_3 <- ggplot(results_final_3, aes(predictions, observations)) +
+      geom_point(color = "darkblue", alpha = 0.5) + 
+      geom_smooth(method = "lm", colour = "black")+ ggtitle('Model 1') +
+      ggtitle("Model 3") +
+      xlab("Predicted") +
+      ylab("Observed") +
+      theme(plot.title = element_text(color="black",size=12,hjust = 0.5))
+
+results_final_4 <- data.frame(cbind(predictions = model_4$pred[,1], observations = model_4$pred[,2]))
+
+model_final_4 <- ggplot(results_final_4, aes(predictions, observations)) +
+      geom_point(color = "darkgrey", alpha = 0.8) + 
+      geom_smooth(method = "lm", colour = "black")+ ggtitle('Model 5') +
+      ggtitle("Model 4") +
+      xlab("Predicted") +
+      ylab("Observed") +
+      theme(plot.title = element_text(color="black", size=12, hjust = 0.5))
+
+
+
+require(patchwork)
+patchwork = model_final_1 + model_final_2 + model_final_3 + model_final_4
+
+patchwork[[1]] = patchwork[[1]] + theme(axis.title.x = element_blank())
+
+patchwork[[2]] = patchwork[[2]] + theme(axis.title.x = element_blank())
+
+patchwork[[2]] = patchwork[[2]] + theme(axis.text.y = element_blank(),
+                                        axis.ticks.y = element_blank(),
+                                        axis.title.y = element_blank() )
+
+patchwork[[4]] = patchwork[[4]] + theme(axis.text.y = element_blank(),
+                                        axis.ticks.y = element_blank(),
+                                        axis.title.y = element_blank() )
+
+patchwork 
+
+
+```
+\begin{center}
+Figure 4. All four models plotted in comparison with one another. 
+\end{center}
+
+# Predicting Nonfarm Employment in 2019
+
+In order to see the true predictive power of the models, they are going to be evaluated on data that they are not trained on. This approach is known as the train-validation set approach. By creating this data partition, only the values up to the last year (2019) will be included to then be evaluated on the test data from 2019. All of the predictors in these models are centered on a mean of zero and scaled. This 
+
+
+
+```{r}
+final_results['OOS RMSE'] <-  c(9.101140364,	9.100578909,	9.100818091,	9.101291455)
+final_results['num of vars'] <- c(56, 26, 29, 24)
+
+final_results <- final_results %>% select(c(1,2,4,5,6,7,8))
+kable(final_results, format = "latex") %>% 
+  kable_styling(position = "center", latex_options = "striped")
+```
+
+With a better score in every single metric, it looks like model 2 is still the best performing model of the bunch. It is also relatively parsimonious while explaining most of the variance in nonfarm employment. To develop this model further, transformations will be performed to show the actual level of nonfarm employment predictions. Note that for this model's approximations, normality will be approximately assumed. 
