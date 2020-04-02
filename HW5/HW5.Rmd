@@ -1,0 +1,168 @@
+---
+title: "Untitled"
+author: "Angel Sarmiento"
+date: "3/31/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NA, message = FALSE, warning = FALSE)
+```
+
+```{r}
+library(caret)
+library(tidyverse)
+
+library(patchwork)
+library(kableExtra)
+library(tsibble)
+library(lubridate)
+library(fable)
+library(fredr)
+```
+
+```{r}
+fredr_set_key("91de61ed607a6478d01c35d9a903017c")
+
+
+test <- if (requireNamespace("purrr", quietly = TRUE)) {
+
+  library(purrr)
+  purrr::map_dfr(c('FLNAN', 'FLLFN', 'LREM25TTUSM156N', 'FLBPPRIV'), fredr)
+
+  # Using purrr::pmap_dfr() allows you to use varying optional parameters
+  params <- list(
+    series_id = c('FLNAN', 'FLLFN', 'LREM25TTUSM156N', 'FLBPPRIV')
+  )
+
+  purrr::pmap_dfr(
+    .l = params,
+    .f = ~ fredr(series_id = .x)
+  )
+
+} 
+data <- pivot_wider(test, 
+            names_from = series_id,
+            values_from = value)
+
+```
+
+
+
+```{r Wrangling the data}
+#Reshaping and reformatting
+data[2:5] <- log(data[2:5]) 
+
+colnames(data)[2:5] <- c("ln_fl_nonfarm", "ln_fl_lf", "ln_us_epr", "ln_fl_bp")
+data <- data[709:974,]
+
+#now to difference the data
+data <- data[order(data$date, decreasing = TRUE),]
+
+data['d.fl_nonfarm'] <- difference(data$ln_fl_nonfarm, differences = 1)
+data['d.fl_lf'] <- difference(data$ln_fl_lf,  differences = 1) 
+data['d.fl_bp'] <- difference(data$ln_fl_bp, differences = 1)
+data['d.us_epr'] <- difference(data$ln_us_epr, differences = 1) 
+
+
+#setting it back
+data <- data[order(data$date, decreasing = FALSE),]
+# Make Dummy Vars for Month
+# data <-data %>% 
+#   mutate(month = month(date)) %>% 
+#   mutate(jan = (month == 1),
+#          feb = (month == 2),
+#          mar = (month == 3),
+#          apr = (month == 4),
+#          may = (month == 5),
+#          jun = (month == 6),
+#          jul = (month == 7),
+#          aug = (month == 8),
+#          sep = (month == 9),
+#          oct = (month == 10),
+#          nov = (month == 11),
+#          dec = (month == 12)) 
+
+# month <- yearmonth(data$date) %>% 
+#   format(format = "%m") %>% 
+#   as.factor()
+# data['month'] <- month
+
+data_ts <- data %>% 
+  mutate(YearMonth = yearmonth(as.character(data$date))) %>%
+  as_tsibble(index = YearMonth)
+
+# data_ts <- data  %>% 
+#   as_tsibble(index = month)
+
+```
+
+```{r}
+train_set <- data_ts[2:252,] 
+
+test_set <- data_ts[253:264,]
+
+```
+
+```{r Forecasting with 4 different Models, out.width="100%", out.height="60%"}
+#building the models
+
+ model_1 <- train_set %>% model(
+   ardl = TSLM(d.fl_nonfarm ~ lag(d.fl_nonfarm,1) + lag(d.fl_nonfarm,2) + lag(d.fl_nonfarm,3) + lag(d.fl_nonfarm,4) + lag(d.fl_nonfarm,5) +
+          lag(d.fl_nonfarm,6) + lag(d.fl_nonfarm,7) + lag(d.fl_nonfarm,8) + lag(d.fl_nonfarm,9) + lag(d.fl_nonfarm,10) + lag(d.fl_nonfarm,11)+
+          lag(d.fl_nonfarm,12) + lag(d.fl_lf,1) + lag(d.fl_lf,2) +
+          lag(d.us_epr,1) + lag(d.us_epr,2) +
+          lag(d.fl_bp,1) + lag(d.fl_bp,2)  +
+          YearMonth ),
+   arima = ARIMA(d.fl_nonfarm),
+   var = VAR(d.fl_nonfarm ~ AR(1:12), ic = "aic" )
+   # levi = TSLM(d.fl_nonfarm ~ lag(d.fl_nonfarm,1) + lag(d.fl_nonfarm,2) + lag(d.fl_nonfarm,3) + lag(d.fl_nonfarm,4) + lag(d.fl_nonfarm,5) +
+   #               lag(d.fl_nonfarm,6) + lag(d.fl_nonfarm,7) + lag(d.fl_nonfarm,8) + lag(d.fl_nonfarm,9) + lag(d.fl_nonfarm,10) +
+   #               lag(d.fl_nonfarm,11)+ lag(d.fl_nonfarm,12) + lag(d.fl_nonfarm,24)+ lag(d.fl_lf,1) + lag(d.fl_lf,2) + lag(d.fl_lf,3) +
+   #               lag(d.fl_lf,4) + lag(d.fl_lf,5) + lag(d.fl_lf,6) + lag(d.fl_lf,7) + lag(d.fl_lf,8) + lag(d.fl_lf,9) + lag(d.fl_lf,10) +
+   #               lag(d.fl_lf,11)+ lag(d.fl_lf,12) + lag(d.fl_lf,24) + lag(d.us_epr,1) + lag(d.us_epr,2) + lag(d.us_epr,3) + lag(d.us_epr,4) +
+   #               lag(d.us_epr,5) + lag(d.us_epr,6) + lag(d.us_epr,7) + lag(d.us_epr,8) + lag(d.us_epr,9) + lag(d.us_epr,10) + lag(d.us_epr,11)+
+   #               lag(d.us_epr,12) + lag(d.us_epr,24) + lag(d.fl_bp,1) + lag(d.fl_bp,2) + lag(d.fl_bp,3) + lag(d.fl_bp,4) + lag(d.fl_bp,5) +
+   #               lag(d.fl_bp,6) + lag(d.fl_bp,7) + lag(d.fl_bp,8) + lag(d.fl_bp,9) + lag(d.fl_bp,10) + lag(d.fl_bp,11)+ lag(d.fl_bp,12) +
+   #               lag(d.fl_bp, 24) +
+   #               YearMonth)
+   )
+
+# forecasting on the test set 
+fc <- forecast(model_1, new_data = test_set)
+
+#Plotting Predictions
+autoplot(fc, data = train_set, level = NULL) +
+  ggtitle("Forecast for Nonfarm Employment") +
+  xlab("Months") +
+  guides(colour = guide_legend(title = "Forecast"))
+```
+
+```{r}
+accuracy(fc, test_set) %>%  kable()
+```
+
+
+```{r Evaluating Accuracy}
+fc_accuracy <- accuracy(fc, test_set,
+  measures = list(
+    point_accuracy_measures,
+    interval_accuracy_measures,
+    distribution_accuracy_measures
+  )
+)
+
+
+fc_accuracy %>%
+  group_by(.model) %>%
+  summarise(
+    RMSE = mean(RMSE),
+    MAE = mean(MAE),
+    MASE = mean(MASE),
+    Winkler = mean(winkler),
+    CRPS = mean(CRPS)
+  ) %>%
+  arrange(RMSE) %>% kable(format = "latex") %>% kable_styling(position = "center", latex_options = "striped")
+```
+
+
