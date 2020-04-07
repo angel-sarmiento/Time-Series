@@ -1,0 +1,614 @@
+---
+title: "Problem Set 4"
+author: "Levi C. Nicklas"
+date: "3/26/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+```{r Setup, include = FALSE, message = FALSE}
+## Library & Use.
+library(tidyverse)    # General Dataframe handling & plotting.
+library(lubridate)    # Date handling.
+library(tsibble)      # Use Timeseries better! 
+library(feasts)       # Make TS plots.
+library(forecast)     # Use tslm - time series linear model.
+library(fable)
+
+## Set Seed for Random Processes to be reproducible.
+set.seed(23)
+```
+
+# Introduction 
+The data for this analysis comes from the Federal Reserve Economic Database (FRED) and was requested and downloaded on January 15th, 2020. The data are non-seasonally adjusted monthly measurements spanning 1948-2020. The variables of concern for the analysis are:
+
+- ($y_1$) Total Non-farm Employees in the State of Florida.
+- ($x_1$) Civilian Labor Force in the State of Florida.
+- ($x_2$) New Private Housing Unit Permits Issued in the State of Florida.
+- ($x_3$) Employment Population Ratio (Ages 25-54) for USA. 
+
+Variable | Date Range | Source | No. of Observations
+:---------:|:------------:|:--------:|:---------------------:
+$y_1$    | 1990-2020  | FRED$^{1}$  | $359$
+$x_1$    | 1976-2020  | FRED$^{1}$  | $527$
+$x_2$    | 1988-2020  | FRED$^{1}$  | $383$
+$x_3$    | 1948-2020  | USBLS$^{2}$  | $864$
+
+```{r Remove Last 12 pts, echo = F, message=F}
+all_data <- read_csv("data.csv") 
+
+# Make a real date
+all_data <- all_data %>% 
+  mutate(DATE = lubridate::as_datetime(lubridate::mdy(DATE)))
+
+# Difference all the variables 
+all_data <- all_data %>% 
+  mutate(d.fl_bp = log(fl_bp) - log(lag(fl_bp,1))) %>% 
+  mutate(d.fl_lf = log(fl_lf) - log(lag(fl_lf,1))) %>% 
+  mutate(d.fl_nonfarm = log(fl_nonfarm) - log(lag(fl_nonfarm,1))) %>% 
+  mutate(d.us_epr = log(us_epr_25to54) - log(lag(us_epr_25to54,1)))
+
+# Make Dummy Vars for Month
+all_data <-all_data %>% 
+  mutate(month = month(DATE)) %>% 
+  mutate(jan = (month == 1),
+         feb = (month == 2),
+         mar = (month == 3),
+         apr = (month == 4),
+         may = (month == 5),
+         jun = (month == 6),
+         jul = (month == 7),
+         aug = (month == 8),
+         sep = (month == 9),
+         oct = (month == 10),
+         nov = (month == 11),
+         dec = (month == 12))
+
+all_data_ts <- all_data %>% 
+  mutate(id = row_number()) %>% 
+  as_tsibble(index = id)
+
+trunc_data <- all_data_ts %>% 
+  head(nrow(all_data_ts)-12)
+
+OOS_data <- all_data_ts %>% 
+  tail(12)
+```
+
+```{r TS lines, echo = F}
+all_data_ts %>% 
+  pivot_longer(c(fl_bp, fl_lf, fl_nonfarm, us_epr_25to54)) %>% 
+  drop_na() %>% 
+  ggplot(aes(DATE, log(value), color = name))+
+  geom_line()+
+  facet_wrap(~name, scales = "free")+
+  scale_color_brewer(palette = "Set1") +
+  theme_classic() +
+  labs(x = "Date", y = "log() of value",
+       title = "Figure 2: Data Time Series Plots",
+       color = "Variable")
+
+
+
+```
+
+# Part 1:
+
+In problem set 3, we had models the four models, but now they are adapted for 1 period ahead forecasting.
+
+**Model 1**:
+
+
+$\begin{aligned}
+\Delta \ln (y_t) =& \sum_{i=1}^{12} l_i \Delta \ln(y_{t-i}) + \sum_{i=1}^{12} l_{1,i} \Delta \ln(x_{1,t-i}) + \sum_{i=1}^{12} l_{2,i} \Delta \ln(x_{2,t-i}) +\\
+& \sum_{i=1}^{12} l_{3,i} \Delta \ln(x_{3,t-i}) + \sum_{i=1}^{12} m_i + t + \epsilon
+\end{aligned}$
+
+**Model 2**:
+
+
+$\begin{aligned}
+\Delta \ln (y_t) =& \sum_{i=1}^{12} l_i \Delta \ln(y_{t-i}) + \sum_{i=1}^{2} l_{1,i} \Delta \ln(x_{1,t-i}) + \sum_{i=1}^{2} l_{2,i} \Delta \ln(x_{2,t-i}) +\\
+& \sum_{i=1}^{2} l_{3,i} \Delta \ln(x_{3,t-i}) + \sum_{i=1}^{12} m_i + t + \epsilon
+\end{aligned}$
+
+**Model 3**:
+
+
+$\begin{aligned}
+\Delta \ln (y_t) =& \sum_{i=1}^{12} l_i \Delta \ln(y_{t-i}) + \sum_{i=1}^{2} l_{1,i} \Delta \ln(x_{1,t-i}) + l_{1,12} \Delta \ln(x_{1,t-12}) + \\
+& \sum_{i=1}^{2} l_{2,i} \Delta \ln(x_{2,t-i}) + l_{2,12} \Delta \ln(x_{2,t-12})+ \\
+& \sum_{i=1}^{2} l_{3,i} \Delta \ln(x_{3,t-i}) +l_{3,12} \Delta \ln(x_{3,t-12})+ \\
+&\sum_{i=1}^{12} m_i + t + \epsilon
+\end{aligned}$
+
+
+**Model 4**:
+
+
+$\begin{aligned}
+\Delta \ln (y_t) =& \sum_{i=1}^{12} l_i \Delta \ln(y_{t-i}) + \sum_{i=1}^{12} l_{1,i} \Delta \ln(x_{1,t-i})+ l_{1,24} \Delta \ln(x_{1,t-24}) + \sum_{i=1}^{12} l_{2,i} \Delta \ln(x_{2,t-i}) +l_{2,24} \Delta \ln(x_{2,t-24})+\\
+& \sum_{i=1}^{12} l_{3,i} \Delta \ln(x_{3,t-i}) + l_{3,24} \Delta \ln(x_{3,t-24})+\\
+&\sum_{i=1}^{12} m_i + t + \epsilon
+\end{aligned}$
+
+To adapt for the 1 period ahead forecasting, I removed any variables with a lag of $0$.
+
+# Part 2:
+
+For each of these models, I then will calculate an *out of sample* RMSE by truncating the dataset and removing the last $12$ observations. To prepare the dataset for modeling, I also then calculate the log of all variables and then take their difference. Also, a set of monthly indicators are made by one hot encoding the month portion of the `DATE` variable. The models are then fit on the remaining data points, and then I use the fitted models to predict what the out of sample 12 points we withheld would be. These predictions are then used to calculate the out of sample RMSE for each model.
+
+
+```{r Build Models, echo = F}
+ model_1 <- trunc_data %>% model(TSLM(d.fl_nonfarm ~ lag(d.fl_nonfarm,1) + lag(d.fl_nonfarm,2) + lag(d.fl_nonfarm,3) + lag(d.fl_nonfarm,4) + lag(d.fl_nonfarm,5) + lag(d.fl_nonfarm,6) + lag(d.fl_nonfarm,7) + lag(d.fl_nonfarm,8) + lag(d.fl_nonfarm,9) + lag(d.fl_nonfarm,10) + lag(d.fl_nonfarm,11)+ lag(d.fl_nonfarm,12) +
+                 lag(d.fl_lf,1) + lag(d.fl_lf,2) + lag(d.fl_lf,3) + lag(d.fl_lf,4) + lag(d.fl_lf,5) + lag(d.fl_lf,6) + lag(d.fl_lf,7) + lag(d.fl_lf,8) + lag(d.fl_lf,9) + lag(d.fl_lf,10) + lag(d.fl_lf,11)+ lag(d.fl_lf,12)+
+                 lag(d.us_epr,1) + lag(d.us_epr,2) + lag(d.us_epr,3) + lag(d.us_epr,4) + lag(d.us_epr,5) + lag(d.us_epr,6) + lag(d.us_epr,7) + lag(d.us_epr,8) + lag(d.us_epr,9) + lag(d.us_epr,10) + lag(d.us_epr,11)+ lag(d.us_epr,12) +
+                 lag(d.fl_bp,1) + lag(d.fl_bp,2) + lag(d.fl_bp,3) + lag(d.fl_bp,4) + lag(d.fl_bp,5) + lag(d.fl_bp,6) + lag(d.fl_bp,7) + lag(d.fl_bp,8) + lag(d.fl_bp,9) + lag(d.fl_bp,10) + lag(d.fl_bp,11)+ lag(d.fl_bp,12) +
+                 jan + feb + mar + apr + may + jun + jul + aug + sep + oct + nov + id))
+
+
+model_2 <- lm(d.fl_nonfarm ~ lag(d.fl_nonfarm,1) + lag(d.fl_nonfarm,2) + lag(d.fl_nonfarm,3) + lag(d.fl_nonfarm,4) + lag(d.fl_nonfarm,5) + lag(d.fl_nonfarm,6) + lag(d.fl_nonfarm,7) + lag(d.fl_nonfarm,8) + lag(d.fl_nonfarm,9) + lag(d.fl_nonfarm,10) + lag(d.fl_nonfarm,11)+ lag(d.fl_nonfarm,12) +
+                 lag(d.fl_lf,1) + lag(d.fl_lf,2) +
+                 lag(d.us_epr,1) + lag(d.us_epr,2) +
+                 lag(d.fl_bp,1) + lag(d.fl_bp,2) +
+                 jan + feb + mar + apr + may + jun + jul + aug + sep + oct + nov + id,
+               data = trunc_data)  
+
+model_3 <- lm(d.fl_nonfarm ~ lag(d.fl_nonfarm,1) + lag(d.fl_nonfarm,2) + lag(d.fl_nonfarm,3) + lag(d.fl_nonfarm,4) + lag(d.fl_nonfarm,5) + lag(d.fl_nonfarm,6) + lag(d.fl_nonfarm,7) + lag(d.fl_nonfarm,8) + lag(d.fl_nonfarm,9) + lag(d.fl_nonfarm,10) + lag(d.fl_nonfarm,11)+ lag(d.fl_nonfarm,12) +
+                 lag(d.fl_lf,1) + lag(d.fl_lf,2) + lag(d.fl_lf,12) +
+                 lag(d.us_epr,1) + lag(d.us_epr,2) + lag(d.us_epr,12) + 
+                 lag(d.fl_bp,1) + lag(d.fl_bp,2) + lag(d.fl_bp,12)+
+                 jan + feb + mar + apr + may + jun + jul + aug + sep + oct + nov + id,
+               data = trunc_data)
+
+ model_4 <- lm(d.fl_nonfarm ~ lag(d.fl_nonfarm,1) + lag(d.fl_nonfarm,2) + lag(d.fl_nonfarm,3) + lag(d.fl_nonfarm,4) + lag(d.fl_nonfarm,5) + lag(d.fl_nonfarm,6) + lag(d.fl_nonfarm,7) + lag(d.fl_nonfarm,8) + lag(d.fl_nonfarm,9) + lag(d.fl_nonfarm,10) + lag(d.fl_nonfarm,11)+ lag(d.fl_nonfarm,12) + lag(d.fl_nonfarm,24)+
+                 lag(d.fl_lf,1) + lag(d.fl_lf,2) + lag(d.fl_lf,3) + lag(d.fl_lf,4) + lag(d.fl_lf,5) + lag(d.fl_lf,6) + lag(d.fl_lf,7) + lag(d.fl_lf,8) + lag(d.fl_lf,9) + lag(d.fl_lf,10) + lag(d.fl_lf,11)+ lag(d.fl_lf,12) + lag(d.fl_lf,24) +
+                 lag(d.us_epr,1) + lag(d.us_epr,2) + lag(d.us_epr,3) + lag(d.us_epr,4) + lag(d.us_epr,5) + lag(d.us_epr,6) + lag(d.us_epr,7) + lag(d.us_epr,8) + lag(d.us_epr,9) + lag(d.us_epr,10) + lag(d.us_epr,11)+ lag(d.us_epr,12) + lag(d.us_epr,24) +
+                 lag(d.fl_bp,1) + lag(d.fl_bp,2) + lag(d.fl_bp,3) + lag(d.fl_bp,4) + lag(d.fl_bp,5) + lag(d.fl_bp,6) + lag(d.fl_bp,7) + lag(d.fl_bp,8) + lag(d.fl_bp,9) + lag(d.fl_bp,10) + lag(d.fl_bp,11)+ lag(d.fl_bp,12) + lag(fl_bp, 24) +
+                 jan + feb + mar + apr + may + jun + jul + aug + sep + oct + nov + id,
+               data = trunc_data)  
+```
+
+```{r OOS RMSE, echo = F}
+# Model 1 OOS RMSE
+m1_oos_rmse <- predict(model_1, newdata = all_data_ts, interval = "prediction", level = 0.95) %>% 
+  as.data.frame()
+colnames(m1_oos_rmse) <- c("y_hat", "lwr_ci", "upr_ci")
+
+all_data_ts$m1_y_hat <- m1_oos_rmse$y_hat
+all_data_ts$m1_lwr_ci <- m1_oos_rmse$lwr_ci
+all_data_ts$m1_upr_ci <- m1_oos_rmse$upr_ci
+
+m1_oos_rmse <- sqrt(mean((all_data_ts$m1_y_hat[371:382]-all_data$d.fl_nonfarm[371:382])^2))
+
+
+# Model 2 OOS RMSE
+m2_oos_rmse <- predict(model_2, newdata = all_data_ts, interval = "prediction", level = 0.95) %>% 
+  as.data.frame()
+colnames(m2_oos_rmse) <- c("y_hat", "lwr_ci", "upr_ci")
+
+all_data_ts$m2_y_hat <- m2_oos_rmse$y_hat
+all_data_ts$m2_lwr_ci <- m2_oos_rmse$lwr_ci
+all_data_ts$m2_upr_ci <- m2_oos_rmse$upr_ci
+
+m2_oos_rmse <- sqrt(mean((all_data_ts$m2_y_hat[371:382]-all_data$d.fl_nonfarm[371:382])^2))
+
+
+# Model 3 OOS RMSE
+m3_oos_rmse <- predict(model_3, newdata = all_data_ts, interval = "prediction", level = 0.95) %>%
+  as.data.frame()
+colnames(m3_oos_rmse) <- c("y_hat", "lwr_ci", "upr_ci")
+
+all_data_ts$m3_y_hat <- m3_oos_rmse$y_hat
+all_data_ts$m3_lwr_ci <- m3_oos_rmse$lwr_ci
+all_data_ts$m3_upr_ci <- m3_oos_rmse$upr_ci
+
+m3_oos_rmse <- sqrt(mean((all_data_ts$m3_y_hat[371:382]-all_data$d.fl_nonfarm[371:382])^2))
+
+
+# Model 4 OOS RMSE
+m4_oos_rmse <- predict(model_4, newdata = all_data_ts, interval = "prediction", level = 0.95) %>% 
+  as.data.frame()
+colnames(m4_oos_rmse) <- c("y_hat", "lwr_ci", "upr_ci")
+
+all_data_ts$m4_y_hat <- m4_oos_rmse$y_hat
+all_data_ts$m4_lwr_ci <- m4_oos_rmse$lwr_ci
+all_data_ts$m4_upr_ci <- m4_oos_rmse$upr_ci
+
+m4_oos_rmse <- sqrt(mean((all_data_ts$m4_y_hat[371:382]-all_data$d.fl_nonfarm[371:382])^2))
+
+knitr::kable(
+  data.frame(Models = c("Model 1", "Model 2", "Model 3", "Model 4"),
+             OOS_RMSE = c(m1_oos_rmse,m2_oos_rmse, m3_oos_rmse, m4_oos_rmse))
+)
+```
+
+Upon looking at the OOS RMSE, Model 3 is doing the best. This is good as the model is fairly simple, and I think matches my intuition.
+
+# Part 3:
+
+In the visualizations below, the last 12 observations (the observations used to assess OOS RMSE) have been removed, and we are only looking at the latest 24 observations. The red line represents the model predictions, the blue points are the actual values, and the grey area is the prediction/forecast interval. These look good, and we are only missing the two extreme points that occur in the later part of 2017.
+
+
+```{r Model Fit Actual, echo = F}
+all_data_ts %>% 
+  drop_na() %>% 
+  filter(id > nrow(all_data_ts) - 36) %>% 
+  filter(id < nrow(all_data_ts) - 12) %>% 
+  ggplot() +
+  geom_ribbon(aes(x = DATE, ymin = m1_lwr_ci, ymax = m1_upr_ci), alpha = 0.5, fill = "grey")+
+  geom_line(aes(DATE,m1_y_hat), color = "red", alpha = 0.75) +
+  geom_point(aes(DATE, d.fl_nonfarm), color = "blue") +
+  theme_classic() +
+  labs(title = "Model 1 - Prediction (Red) vs Actual (Blue)",
+       x = "Date", y = "Difference in Log of Florida Non-Farm Employment")
+
+all_data_ts %>% 
+  drop_na() %>% 
+  filter(id > nrow(all_data_ts) - 36) %>% 
+  filter(id < nrow(all_data_ts) - 12) %>% 
+  ggplot() +
+  geom_ribbon(aes(x = DATE, ymin = m2_lwr_ci, ymax = m2_upr_ci), alpha = 0.5, fill = "grey")+
+  geom_line(aes(DATE,m2_y_hat), color = "red", alpha = 0.75) +
+  geom_point(aes(DATE, d.fl_nonfarm), color = "blue") +
+  theme_classic() +
+  labs(title = "Model 2 - Prediction (Red) vs Actual (Blue)",
+       x = "Date", y = "Difference in Log of Florida Non-Farm Employment")
+
+all_data_ts %>% 
+  drop_na() %>% 
+  filter(id > nrow(all_data_ts) - 36) %>% 
+  filter(id < nrow(all_data_ts) - 12) %>% 
+  ggplot() +
+  geom_ribbon(aes(x = DATE, ymin = m3_lwr_ci, ymax = m3_upr_ci), alpha = 0.5, fill = "grey")+
+  geom_line(aes(DATE,m3_y_hat), color = "red", alpha = 0.75) +
+  geom_point(aes(DATE, d.fl_nonfarm), color = "blue") +
+  theme_classic() +
+  labs(title = "Model 3 - Prediction (Red) vs Actual (Blue)",
+       x = "Date", y = "Difference in Log of Florida Non-Farm Employment")
+
+
+all_data_ts %>% 
+  drop_na() %>% 
+  filter(id > nrow(all_data_ts) - 36) %>% 
+  filter(id < nrow(all_data_ts) - 12) %>% 
+  ggplot() +
+  geom_ribbon(aes(x = DATE, ymin = m4_lwr_ci, ymax = m4_upr_ci), alpha = 0.5, fill = "grey")+
+  geom_line(aes(DATE,m4_y_hat), color = "red", alpha = 0.75) +
+  geom_point(aes(DATE, d.fl_nonfarm), color = "blue") +
+  theme_classic() +
+  labs(title = "Model 4 - Prediction (Red) vs Actual (Blue)",
+       x = "Date", y = "Difference in Log of Florida Non-Farm Employment")
+
+```
+
+
+
+```{r Fit Visualizations Log, include = F, echo = F}
+all_data_ts %>% 
+  tail(12) %>% 
+  ggplot()+
+  geom_line(aes(DATE, m1_y_hat), color = "red", alpha = 0.5)+
+  geom_line(aes(DATE, d.fl_nonfarm), color = "blue", alpha = 0.5)+
+  geom_point(aes(DATE, m1_y_hat), color = "red", alpha = 0.5)+
+  geom_point(aes(DATE, d.fl_nonfarm), color = "blue", alpha = 0.5) +
+  ggtitle("Model 1 - Actual (Blue) vs. Predicted (Red) for OOS Data")
+
+all_data_ts %>% 
+  tail(12) %>% 
+  ggplot()+
+  geom_line(aes(id, m2_y_hat), color = "red", alpha = 0.5)+
+  geom_line(aes(id, d.fl_nonfarm), color = "blue", alpha = 0.5)+
+  geom_point(aes(id, m2_y_hat), color = "red", alpha = 0.5)+
+  geom_point(aes(id, d.fl_nonfarm), color = "blue", alpha = 0.5) +
+  ggtitle("Model 2 - Actual (Blue) vs. Predicted (Red) for OOS Data")
+
+all_data_ts %>% 
+  tail(12) %>% 
+  ggplot()+
+  geom_line(aes(id, m3_y_hat), color = "red", alpha = 0.5)+
+  geom_line(aes(id, d.fl_nonfarm), color = "blue", alpha = 0.5)+
+  geom_point(aes(id, m3_y_hat), color = "red", alpha = 0.5)+
+  geom_point(aes(id, d.fl_nonfarm), color = "blue", alpha = 0.5) +
+  ggtitle("Model 3 - Actual (Blue) vs. Predicted (Red) for OOS Data")
+
+all_data_ts %>% 
+  tail(12) %>% 
+  ggplot()+
+  geom_line(aes(id, m4_y_hat), color = "red", alpha = 0.5)+
+  geom_line(aes(id, d.fl_nonfarm), color = "blue", alpha = 0.5)+
+  geom_point(aes(id, m4_y_hat), color = "red", alpha = 0.5)+
+  geom_point(aes(id, d.fl_nonfarm), color = "blue", alpha = 0.5) +
+  ggtitle("Model 4 - Actual (Blue) vs. Predicted (Red) for OOS Data")
+```
+
+# Part 4:
+
+To further assess model performance, other metrics are applied and compared. After applying AIC, BIC, and *leave one out cross validation (LOOCV)*, I build a table along with the OOS RMSE to pick the best model. 
+
+Implementation of LOOCV is available in the `.rmd` file that accompanies this notebook. AIC and BIC implementations can be found at:
+
+https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/AIC
+
+https://www.rdocumentation.org/packages/lme4/versions/0.999375-37/topics/BIC
+
+Examining the table below, I like how Model 3 performs. Model 3 out performs the other models in AIC and OOS RMSE, and is the only model to win two of the four metrics. But more importantly, I like this model's structure— for the independant variables it features lags of the last two months and the lag for 1 year ago, and for the dependent variable there are lags for 1-12 months. This model really fits with my intuition of what would work, but also would be so easy and clean to explain to someone who isn't technical. 
+```{r aic-bic, echo = F}
+aic_m1 <- AIC(model_1)
+aic_m2 <- AIC(model_2)
+aic_m3 <- AIC(model_3)
+aic_m4 <- AIC(model_4)
+
+bic_m1 <- BIC(model_1)
+bic_m2 <- BIC(model_2)
+bic_m3 <- BIC(model_3)
+bic_m4 <- BIC(model_4)
+```
+
+```{r LOOCV, echo = F}
+
+# Model 1
+rmse_loocv_1 <- rep(0,nrow(all_data_ts)-12)
+
+for(i in 1:(nrow(all_data_ts)-12)){
+  df <- all_data_ts %>% 
+  drop_na() %>% 
+  filter(id < nrow(all_data_ts) - 12) 
+  
+  rmse_i <- sqrt(mean((as.vector(predict(model_1, df[-i,])) - df$d.fl_nonfarm[-i])^2, na.rm = T))
+  #print(rmse_i)
+  
+rmse_loocv_1[i] <- rmse_i
+}
+
+rmse_loocv_1 <- mean(rmse_loocv_1)
+
+# Model 2
+rmse_loocv_2 <- rep(0,nrow(all_data_ts)-12)
+
+for(i in 1:(nrow(all_data_ts)-12)){
+  df <- all_data_ts %>% 
+  drop_na() %>% 
+  filter(id < nrow(all_data_ts) - 12) 
+  
+  rmse_i <- sqrt(mean((as.vector(predict(model_2, df[-i,])) - df$d.fl_nonfarm[-i])^2, na.rm = T))
+  #print(rmse_i)
+  
+rmse_loocv_2[i] <- rmse_i
+}
+
+rmse_loocv_2 <- mean(rmse_loocv_2)
+
+# Model 3
+rmse_loocv_3 <- rep(0,nrow(all_data_ts)-12)
+
+for(i in 1:(nrow(all_data_ts)-12)){
+  df <- all_data_ts %>% 
+  drop_na() %>% 
+  filter(id < nrow(all_data_ts) - 12) 
+  
+  rmse_i <- sqrt(mean((as.vector(predict(model_3, df[-i,])) - df$d.fl_nonfarm[-i])^2, na.rm = T))
+  #print(rmse_i)
+  
+rmse_loocv_3[i] <- rmse_i
+}
+
+rmse_loocv_3 <- mean(rmse_loocv_3)
+
+# Model 4
+rmse_loocv_4 <- rep(0,nrow(all_data_ts)-12)
+
+for(i in 1:(nrow(all_data_ts)-12)){
+  df <- all_data_ts %>% 
+  drop_na() %>% 
+  filter(id < nrow(all_data_ts) - 12) 
+  
+  rmse_i <- sqrt(mean((as.vector(predict(model_4, df[-i,])) - df$d.fl_nonfarm[-i])^2, na.rm = T))
+  #print(rmse_i)
+  
+rmse_loocv_4[i] <- rmse_i
+}
+
+rmse_loocv_4 <-mean(rmse_loocv_4)
+```
+
+```{r Metric Results, echo = F}
+metrics_table <- data.frame(Models = c("Model 1", "Model 2", "Model 3", "Model 4"),
+                            AIC =c(aic_m1,aic_m2,aic_m3,aic_m4),
+                            BIC = c(bic_m1,bic_m2,bic_m3,bic_m4),
+                            LOOCV_RMSE = c(rmse_loocv_1,rmse_loocv_2, rmse_loocv_3, rmse_loocv_4),
+                            OOS_RMSE = c(m1_oos_rmse, m2_oos_rmse, m3_oos_rmse, m4_oos_rmse)
+                            )
+knitr::kable(metrics_table)
+
+
+
+
+```
+
+# Part 5:
+
+Since Model 3 out performed the other models, we will proceed with only Model 3. First we examine the confidence intervals using assumptions of normality.
+```{r, echo = F}
+model_3_rmse <- sqrt(mean((predict(model_3) - trunc_data$d.fl_nonfarm[13:370])^2))
+
+all_data_ts %>% 
+  drop_na() %>% 
+  filter(id > nrow(all_data_ts) - 36) %>% 
+  mutate(fl_nonfarm_pred = exp(log(lag(fl_nonfarm)) + m3_y_hat)) %>% 
+  mutate(fl_nonfarm_m3_upr_ci = exp((model_3_rmse^2)/2)+exp(log(lag(fl_nonfarm)) + m3_upr_ci))%>%
+  mutate(fl_nonfarm_m3_lwr_ci = exp((model_3_rmse^2)/2)+exp(log(lag(fl_nonfarm)) + m3_lwr_ci)) %>%
+  ggplot() +
+  geom_ribbon(aes(x = DATE, ymin = fl_nonfarm_m3_lwr_ci, ymax = fl_nonfarm_m3_upr_ci), alpha = 0.5, fill = "grey")+
+  geom_line(aes(DATE, fl_nonfarm_pred ), color = "red", alpha = 0.75) +
+  geom_point(aes(DATE, fl_nonfarm), color = "blue") +
+  geom_vline(xintercept = as_datetime("2018-12-01"), lty = 2) +
+  theme_classic() +
+  labs(x = "Date", y = "FL Non-Farm Employment",
+       title = "Model 3 Prediction vs Actual for FL Non-Farm Employment",
+       caption = "Note: Red line is the point forecast, blue points are observed values, grey region is the 95% confidence interval, \n and values beyond the dotted line denote those that are out of sample. PI constructed with assumptions of normality.")
+```
+In the forecast above, Model 3 was trained on all but the last 12 observations (all to the left of the dotted line). We see that there are a handful of points outside of the prediciton interval. Despite this, the model does an excellent job predictiong the 12 out of sample values (to the right of the dotted line). To check if our assumptions are valid. I will check for normality assumptions.
+
+```{r Norm Assumptions, echo = F}
+trunc_data %>% 
+  drop_na() %>% 
+  ggplot(aes(d.fl_nonfarm)) + 
+  geom_histogram(color = "white", fill = "blue", bins = 50)+
+  theme_classic() +
+  labs(x = "Value", y = "Count",
+       title = "Distribution of the differenced log of FL non-farm employment")
+
+```
+Since the observed values for `d.fl_nonfarm` (differenced log of FL non-farm employment) appears to be bi-modal or tri-modal, it is certainly not normal. For this reason, we will pivot to using an empirical PI. 
+
+# Part 6:
+
+To construct the empirical PI, we perform the calculation:
+
+$$PI_{lower} = e^{log(y_{t-1}) + \Delta \ln (\hat{y}) + \epsilon_{2.5\%}}$$
+$$PI_{upper} = e^{log(y_{t-1}) + \Delta \ln (\hat{y}) + \epsilon_{97.5\%}}$$
+
+By constructing our PI this way, we avoid relying on the assumptions of normality (using standard errors) and instead build the PI with observed error. Below is the same plot, but with the PI constructed empirically.
+
+```{r emp PI,echo = F}
+avg_resid <- mean(model_3$residuals)
+exp_resids <- exp(model_3$residuals)
+
+emp_resid_quantiles <- quantile(model_3$residuals, c(0.025, 0.975))
+
+all_data_ts %>% 
+  drop_na() %>% 
+  filter(id > nrow(all_data_ts) - 36) %>% 
+  mutate(fl_nonfarm_pred = exp(log(lag(fl_nonfarm)) + m3_y_hat)) %>% 
+  mutate(fl_nonfarm_m3_upr_ci = exp(log(lag(fl_nonfarm)) + m3_y_hat + emp_resid_quantiles[2])) %>% 
+  mutate(fl_nonfarm_m3_lwr_ci = exp(log(lag(fl_nonfarm)) + m3_y_hat + emp_resid_quantiles[1])) %>% 
+  ggplot() +
+  geom_ribbon(aes(x = DATE, ymin = fl_nonfarm_m3_lwr_ci, ymax = fl_nonfarm_m3_upr_ci), alpha = 0.5, fill = "grey")+
+  geom_line(aes(DATE, fl_nonfarm_pred ), color = "red", alpha = 0.75) +
+  geom_point(aes(DATE, fl_nonfarm), color = "blue") +
+  geom_vline(xintercept = as_datetime("2018-12-01"), lty = 2) +
+  theme_classic() +
+  labs(x = "Date", y = "FL Non-Farm Employment",
+       title = "Model 3 Prediction vs Actual for FL Non-Farm Employment",
+       caption = "Note: Red line is the point forecast, blue points are observed values, grey region is the 95% confidence interval, \n and values beyond the dotted line denote those that are out of sample. PI build empirically.")
+
+```
+
+For whatever reason, the PI bounds are not wider in this plot than the plot that operated on assumptions of normality. I had expected these bounds to be larger. The observed residuals (from the prediction of the first differenced log of FL non-farm employment) at the 2.5 and 97.5 percentiles were $-0.00593$ and $0.00572$, repsectively. These residuals were small, and led to a smaller PI. This PI still shows that our predictions are good in the OOS data, and we still have 3-4 values that fell outside of the PI.
+
+
+# Part 7-10
+
+As a final test, we can predict the FL non-farm employment for December, which is not in the dataset (dataset ends at November). For this, first I will retrain model 3 with only the significant variables from the first iteration of the model.
+
+```{r Model 3 Summary old, echo = F}
+# Old model summary 
+summary(model_3)
+
+```
+
+This model will now be trained with all of the 382 points we have in the dataset. See below for the resulting summary.
+
+
+```{r Model 3 Summary new, message = F, echo = F}
+## Retrain model 3 with all months of data.
+
+
+model_3 <- lm(d.fl_nonfarm ~ lag(d.fl_nonfarm,1) + lag(d.fl_nonfarm,2) + lag(d.fl_nonfarm,4) + lag(d.fl_nonfarm,5) + lag(d.fl_nonfarm,6) + lag(d.fl_nonfarm,10) + lag(d.fl_nonfarm,11)+ lag(d.fl_nonfarm,12) +
+                 lag(d.fl_lf,1) + lag(d.fl_lf,2) + lag(d.fl_lf,12) +
+                 lag(d.us_epr,1) + lag(d.us_epr,2)+ 
+                 jan + feb + mar + apr + may + jun + jul + aug + sep + oct + nov + id,
+               data = all_data_ts)
+
+summary(model_3)
+```
+
+Despite removing many predictors, we see only a small decrease in the adjusted $r^2$ value. The value for December we would like to predict is: $9128.3$.
+
+```{r Forecast image, echo = F}
+# Add "Empty" rows for TS forecast
+
+forecast_target <- all_data_ts$DATE[382] %m+% months(1)
+empty_vec <- rep(NA,35)
+all_data_ts[383,] <- empty_vec
+all_data_ts$DATE[383] <- forecast_target
+all_data_ts$id[383] <- 383
+all_data_ts$month[383] <- 12
+
+all_data_ts <- all_data_ts %>% 
+  mutate(jan = (month == 1),
+         feb = (month == 2),
+         mar = (month == 3),
+         apr = (month == 4),
+         may = (month == 5),
+         jun = (month == 6),
+         jul = (month == 7),
+         aug = (month == 8),
+         sep = (month == 9),
+         oct = (month == 10),
+         nov = (month == 11),
+         dec = (month == 12))
+
+
+# Update DF
+
+m3_values <- predict(model_3, newdata = all_data_ts, interval = "prediction", level = 0.95) %>%
+  as.data.frame()
+colnames(m3_values) <- c("y_hat", "lwr_ci", "upr_ci")
+
+all_data_ts$m3_y_hat <- m3_values$y_hat
+all_data_ts$m3_lwr_ci <- m3_values$lwr_ci
+all_data_ts$m3_upr_ci <- m3_values$upr_ci
+
+# Plot!!
+model_3_rmse <- sqrt(mean((predict(model_3) - all_data_ts$d.fl_nonfarm[13:382])^2))
+
+all_data_ts %>% 
+  #drop_na() %>% 
+  filter(id > nrow(all_data_ts) - 12) %>% 
+  mutate(fl_nonfarm_pred = exp(log(lag(fl_nonfarm)) + m3_y_hat)) %>% 
+  mutate(fl_nonfarm_m3_upr_ci = exp(log(lag(fl_nonfarm)) + m3_upr_ci))%>%
+  mutate(fl_nonfarm_m3_lwr_ci = exp(log(lag(fl_nonfarm)) + m3_lwr_ci)) %>%
+  ggplot() +
+  geom_ribbon(aes(x = DATE, ymin = fl_nonfarm_m3_lwr_ci, ymax = fl_nonfarm_m3_upr_ci), alpha = 0.5, fill = "grey")+
+  geom_line(aes(DATE, fl_nonfarm_pred ), color = "red", alpha = 0.75) +
+  geom_line(aes(DATE, fl_nonfarm), color = "blue")+
+  geom_vline(xintercept = as_datetime("2019-12-01"), lty = 2) +
+  geom_hline(yintercept = 9128.3, lty = 2, color = "blue") +
+  theme_classic() +
+  scale_x_datetime(limits = c(as_datetime("2019-02-01"),as_datetime("2019-12-01")))+
+  labs(x = "Date", y = "FL Non-Farm Employment",
+       title = "Model 3 Prediction vs Actual for FL Non-Farm Employment",
+       caption = "Note: Red line is the point forecast, blue line is the observed values, grey region is the 95% confidence interval.\n The dotted black line is December, and the dotted blue line is the observed value for December (Via FRED).")
+
+
+
+```
+
+
+Model 3 did an excellent job estimating the FL non-farm employment! Only off by $0.973$! 
+
+# Conclusion
+
+Through this problem set, I made a case for why model 3 is the best model to forecast our $y$ value. We constructed and compared models, and found the best model. After refining that model further, we were able to forecast 1 period ahead with great accuracy. The forecast was a success!
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

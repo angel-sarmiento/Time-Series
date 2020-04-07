@@ -6,8 +6,14 @@ output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, comment = NA, message = FALSE, warning = FALSE)
+knitr::opts_chunk$set(echo = FALSE, comment = NA, message = FALSE, warning = FALSE)
 ```
+
+# Introduction 
+
+This investigation involved forecasting multiple steps ahead using a variety of method. The original dataset of nonfarm employment and the other 3 variables were updated to contain the latest values. In place of GSREG, a genetic algorithm (GA) was employed to fit the best possible model within twelve lags of each variable. This model was compared with 3 others, 2 being models also generated from the GA, and one being the best model from previous investigations.  
+
+\qquad After the best of these was chosen, this model will then be implemented using rolling windows to forecast the next 12 months (2019) and evaluated based on RMSE. The actual nonfarm employment will then be forecasted (instead of the log difference) and then displayed with a plot showing the interval and point forecast. This will then be compared with the empirical method for comparison between empirically generated confidence intervals and confidence intervals that assume normality.  
 
 ```{r}
 library(caret)
@@ -19,6 +25,7 @@ library(tsibble)
 library(lubridate)
 library(fable)
 library(fredr)
+set.seed(33455)
 ```
 
 ```{r}
@@ -49,45 +56,22 @@ data <- pivot_wider(test,
 
 
 
-```{r Wrangling the data}
+```{r P2 Wrangling the data}
 #Reshaping and reformatting
-data[2:5] <- log(data[2:5]) 
+data[6:9] <- log(data[2:5]) 
 
-colnames(data)[2:5] <- c("ln_fl_nonfarm", "ln_fl_lf", "ln_us_epr", "ln_fl_bp")
-data <- data[709:974,]
+colnames(data)[2:5] <- c("fl_nonfarm", "fl_lf", "us_epr", "fl_bp")
+colnames(data)[6:9] <- c("ln_fl_nonfarm", "ln_fl_lf", "ln_us_epr", "ln_fl_bp")
+data <- data[613:974,]
 
 #now to difference the data
-data <- data[order(data$date, decreasing = TRUE),]
-
 data['d.fl_nonfarm'] <- difference(data$ln_fl_nonfarm, differences = 1)
 data['d.fl_lf'] <- difference(data$ln_fl_lf,  differences = 1) 
 data['d.fl_bp'] <- difference(data$ln_fl_bp, differences = 1)
 data['d.us_epr'] <- difference(data$ln_us_epr, differences = 1) 
 
 
-#setting it back
-data <- data[order(data$date, decreasing = FALSE),]
 # Make Dummy Vars for Month
-# data <-data %>% 
-#   mutate(month = month(date)) %>% 
-#   mutate(jan = (month == 1),
-#          feb = (month == 2),
-#          mar = (month == 3),
-#          apr = (month == 4),
-#          may = (month == 5),
-#          jun = (month == 6),
-#          jul = (month == 7),
-#          aug = (month == 8),
-#          sep = (month == 9),
-#          oct = (month == 10),
-#          nov = (month == 11),
-#          dec = (month == 12)) 
-
-# month <- yearmonth(data$date) %>% 
-#   format(format = "%m") %>% 
-#   as.factor()
-# data['month'] <- month
-
 data_ts <- data %>% 
   mutate(YearMonth = yearmonth(as.character(data$date))) %>%
   as_tsibble(index = YearMonth)
@@ -98,11 +82,297 @@ data_ts <- data %>%
 ```
 
 ```{r}
-train_set <- data_ts[2:252,] 
+train_set <- data_ts[1:348,] 
 
-test_set <- data_ts[253:264,]
+test_set <- data_ts[349:360,]
 
 ```
+
+```{r GA}
+#Defining predictors for Genetic algorithm 
+#getting a bunch of lags
+lag_predicts <-  seq(12)
+lag_names <- paste("lag", formatC(lag_predicts, width = nchar(max(lag_predicts)), flag = "0"), sep = "_")
+lag_functions <- setNames(paste("dplyr::lag(., ", lag_predicts, ")"), lag_names)
+
+lag_df <- data_ts %>% mutate_at(vars(d.fl_nonfarm, d.fl_lf, d.fl_bp, d.us_epr), funs_(lag_functions))
+```
+
+```{r Removing the first 12 lags}
+b_df <- lag_df[13:362,]
+b_df[,1:5] <- NULL
+b_df[,2:4] <- NULL
+```
+
+```{r P3: GA Train control}
+# ctrl <- gafsControl(functions = caretGA, 
+#                     method = "cv", 
+#                     number = 5, 
+#                     metric = c(internal = "RMSE", external = "RMSE"),
+#                     maximize = FALSE,
+#                     allowParallel = TRUE,
+#                     genParallel = TRUE,
+#                     verbose = TRUE)
+```
+
+
+```{r P3: GA cont}
+# #setting up parallel processing
+# library(doParallel)
+# cl <- makePSOCKcluster(11)
+# registerDoParallel(cl)
+# 
+# library(recipes)
+# #setting up a recipe to get the variables needed for gafs
+# 
+# # not_inc <- list(date, ln_fl_nonfarm, ln_fl_lf, ln_fl_bp, ln_us_epr, d.fl_nonfarm, d.fl_lf, d.fl_bp, d.us_epr)
+# lag_rec <- b_df %>% 
+#   recipe(d.fl_nonfarm~.) 
+# 
+# 
+# 
+# obj <- gafs(lag_rec,
+#             iters = 100,
+#             popSize = 20,
+#             gafsControl = ctrl,
+#             data = b_df,
+#             elite = 3,
+#             ## Now pass options to `train`
+#             
+#             method = "lm",
+#             na.action = na.omit,
+#             trControl = trainControl(method = "cv", number = 5,
+#                                      allowParallel = TRUE)); beepr::beep("coin")
+# 
+# stopCluster(cl)
+
+```
+
+# Genetic Algorithm for best subset selection
+
+In order to test a variety of possible models, a Genetic algorithm was employed automatically generate models. These models are created by the algorithm stochastically searching through the different possible combinations of parameters and parameter values to then minimize a metric based on the values. The metrics used here are the in-sample and out-of-sample Root Mean Squared Error (RMSE). In order to decrease the probability of overfitting, 5-fold cross-validation was implemented on top of 100 iterations of size 20 combinations to drive down the value for RMSE. In the interest of saving time, parallel processing was also implemented on 11 cores (threads). Parallel processing drastically decreased the time taken from many hours to under an hour. To visualize the relationship between RMSE and iterations, figure 1 was graphed. This shows both the in-sample and out-of-sample (OOS/external) RMSE changing over time. \cleardoublepage
+```{r GA Models Selected, echo = FALSE, out.width="80%", out.height="70%", fig.cap="Genetic Algorithm iterations", fig.show="hold", fig.align='center'}
+
+knitr::include_graphics("iterations_ga.png") 
+```
+
+
+Surprisingly, the model shows very little improvement over successive generations in external RMSE. This is a fairly significant demonstration that the model is still overfitting to the training data. Ideally, steps would be taken to improve this like increasing the number of folds or letting the algorithm run for more iterations with higher population sizes. This however would take much longer and it has been decided that the best model can be tuned further outside of the genetic algorithm for higher performance. 
+
+\qquad The following table shows 4 different model performances. The first three models are models generated by the GA that seemed to perform well with model three being the model selected as the best by the GA and tweaked outside of the GA. The tweaking involved running on different seeds and training with more folds to alleviate the overfitting situation. The fourth model in this table is the model generated from multiple previous investigations into the modelling and forecasting of nonfarm employment.
+
+\qquad Each of these models were selected for different reasons. Model 1 has less overall external RMSE performance but does so with a better selection of variables that is more parsimonious and explains an amount of variance that is competitively similar to model 3. Model 2 was chosen because the external RMSE and internal RMSE are fairly close together. This, to me, shows that this model is relatively robust to overfitting. This model is also slightly more parsimonious than model 3. 
+
+```{r P5: 3 Model, model selection}
+
+RMSE <- c(0.00374, 0.00396, 0.00364, 0.004840)
+OOS_RMSE <- c(0.00538, 0.003969, 0.002206, 0.0023330)
+Rsquared <- c(0.862, 0.8411, 0.869, 0.7704)
+N_of_Vars <- c(22, 32, 34, 26)
+
+model_select <- data.frame(RMSE, OOS_RMSE, Rsquared, N_of_Vars)
+
+rows <- c("Model 1", "Model 2", "Model 3", "Prev_Best Model")
+rownames(model_select)[1:4] <- rows
+
+model_select %>% kable(format = "latex") %>% 
+  kable_styling(position = "center", latex_options = "striped")
+```
+
+
+\begin{center}
+Table 1. 4 Model comparison between the previous best and the models generated by the GA
+\end{center}
+
+As one can see, the "best" model from the GA slightly overperforms over the others. Because of this, and despite the reasoning above, this model will be selected as the best model. Higher out of sample RMSE is much more indicative of forecasting ability.
+
+```{r}
+model_ardls <- train_set %>% model(
+   ardl = TSLM(d.fl_nonfarm ~ lag(d.fl_nonfarm,1) + lag(d.fl_nonfarm,2) + lag(d.fl_nonfarm,3) + lag(d.fl_nonfarm,4) + lag(d.fl_nonfarm,5) +
+          lag(d.fl_nonfarm,6) + lag(d.fl_nonfarm,7) + lag(d.fl_nonfarm,8) + lag(d.fl_nonfarm,9) + lag(d.fl_nonfarm,10) + lag(d.fl_nonfarm,11)+
+          lag(d.fl_nonfarm,12) + lag(d.fl_lf,1) + lag(d.fl_lf,2) +
+          lag(d.us_epr,1) + lag(d.us_epr,2) +
+          lag(d.fl_bp,1) + lag(d.fl_bp,2)  +
+          YearMonth),
+   ga_ardl = TSLM(d.fl_nonfarm ~ lag(d.fl_nonfarm,1)  + lag(d.fl_nonfarm,4) + lag(d.fl_nonfarm,5) + lag(d.fl_nonfarm,8) + 
+             lag(d.fl_nonfarm,9) + lag(d.fl_nonfarm,10) + lag(d.fl_nonfarm,11) + lag(d.fl_nonfarm,12) + 
+             lag(d.fl_lf,1) + lag(d.fl_lf,3) + lag(d.fl_lf,4) + lag(d.fl_lf,7) + lag(d.fl_lf,8) + lag(d.fl_lf,11) +
+             lag(d.us_epr,1) + lag(d.us_epr,2) + lag(d.us_epr,3) + lag(d.us_epr,4) + lag(d.us_epr,5) + 
+             lag(d.us_epr,6) + lag(d.us_epr,7) + lag(d.us_epr,8) + lag(d.us_epr,9) + lag(d.us_epr,10) +
+             lag(d.fl_bp,1) + lag(d.fl_bp,2)  + lag(d.fl_bp,3) + lag(d.fl_bp,4)  + lag(d.fl_bp,5) +
+             lag(d.fl_bp,6) + lag(d.fl_bp,7)  + lag(d.fl_bp,8)  + lag(d.fl_bp,9)  + lag(d.fl_bp,12) +
+             YearMonth)
+   )
+init_fc <- forecast(model_ardls, new_data = test_set)
+```
+
+```{r P6: Level 97.5 for both models}
+#Plotting Predictions
+autoplot(init_fc, data = data_ts[300:360,], level = 97.5) +
+  ggtitle("Forecast for Nonfarm Employment") +
+  xlab("Months") +
+  guides(colour = guide_legend(title = "Forecast"))
+```
+
+## Explain that these are without rolling window
+
+
+
+
+
+#These are also without rolling window
+
+
+# Rolling Window
+
+```{r Training the GA model with Timeslices}
+tscontrol <- trainControl(method = "timeslice", 
+                          initialWindow = 36,
+                          horizon = 12,
+                          fixedWindow = FALSE,
+                          savePredictions = TRUE)
+```
+
+
+```{r}
+rw_model <- train(d.fl_nonfarm ~ lag(d.fl_nonfarm,1)  + lag(d.fl_nonfarm,4) + lag(d.fl_nonfarm,5) + lag(d.fl_nonfarm,8) + 
+             lag(d.fl_nonfarm,9) + lag(d.fl_nonfarm,10) + lag(d.fl_nonfarm,11) + lag(d.fl_nonfarm,12) + 
+             lag(d.fl_lf,1) + lag(d.fl_lf,3) + lag(d.fl_lf,4) + lag(d.fl_lf,7) + lag(d.fl_lf,8) + lag(d.fl_lf,11) +
+             lag(d.us_epr,1) + lag(d.us_epr,2) + lag(d.us_epr,3) + lag(d.us_epr,4) + lag(d.us_epr,5) + 
+             lag(d.us_epr,6) + lag(d.us_epr,7) + lag(d.us_epr,8) + lag(d.us_epr,9) + lag(d.us_epr,10) +
+             lag(d.fl_bp,1) + lag(d.fl_bp,2)  + lag(d.fl_bp,3) + lag(d.fl_bp,4)  + lag(d.fl_bp,5) +
+             lag(d.fl_bp,6) + lag(d.fl_bp,7)  + lag(d.fl_bp,8)  + lag(d.fl_bp,9)  + lag(d.fl_bp,12) +
+             YearMonth, 
+             data = data_ts,
+             method = "lm",
+             trControl = tscontrol,
+             na.action = na.exclude
+             )
+rw_model
+```
+
+
+
+
+```{r Showing Pred/obs for GA model}
+ggplot(rw_model$pred, aes(x = obs, y = pred)) +
+  geom_point(color = "darkorange") +
+  geom_smooth(method = "lm", color = "black") +
+  xlab("Observations") +
+  ylab("Predictions") +
+  ggtitle("Predictions vs Observations of model trained with Rolling Window")
+  
+```
+
+```{r Forecasting the GA model with intervals (2019)}
+rw_model_2 <- train_set %>% model(
+  ga_ardl = TSLM(d.fl_nonfarm ~ lag(d.fl_nonfarm,1)  + lag(d.fl_nonfarm,4) + lag(d.fl_nonfarm,5) + lag(d.fl_nonfarm,8) + 
+             lag(d.fl_nonfarm,9) + lag(d.fl_nonfarm,10) + lag(d.fl_nonfarm,11) + lag(d.fl_nonfarm,12) + 
+             lag(d.fl_lf,1) + lag(d.fl_lf,3) + lag(d.fl_lf,4) + lag(d.fl_lf,7) + lag(d.fl_lf,8) + lag(d.fl_lf,11) +
+             lag(d.us_epr,1) + lag(d.us_epr,2) + lag(d.us_epr,3) + lag(d.us_epr,4) + lag(d.us_epr,5) + 
+             lag(d.us_epr,6) + lag(d.us_epr,7) + lag(d.us_epr,8) + lag(d.us_epr,9) + lag(d.us_epr,10) +
+             lag(d.fl_bp,1) + lag(d.fl_bp,2)  + lag(d.fl_bp,3) + lag(d.fl_bp,4)  + lag(d.fl_bp,5) +
+             lag(d.fl_bp,6) + lag(d.fl_bp,7)  + lag(d.fl_bp,8)  + lag(d.fl_bp,9)  + lag(d.fl_bp,12) +
+             YearMonth)
+)
+
+ga_fc <- forecast(rw_model_2, new_data = test_set)
+
+#Plotting Predictions
+autoplot(ga_fc, data = test_set, level = c(95, 97.5, 99.8), colour = "darkblue") +
+  ggtitle("Forecasts for Nonfarm Employment from GA model: 2019") +
+  xlab("Months") +
+  guides(colour = guide_legend(title = "Forecast"))
+```
+
+```{r}
+train_set_2019 <- data_ts[1:360,]
+test_set_2020 <- data_ts[349:361,]
+```
+
+
+
+```{r P7: Point and interval Forecasts for 2020 L.d}
+rw_model_2020 <- train_set_2019 %>% model(
+  ga_ardl = TSLM(d.fl_nonfarm~ lag(d.fl_nonfarm,1)  + lag(d.fl_nonfarm,4) + lag(d.fl_nonfarm,5) + lag(d.fl_nonfarm,8) + 
+             lag(d.fl_nonfarm,9) + lag(d.fl_nonfarm,10) + lag(d.fl_nonfarm,11) + lag(d.fl_nonfarm,12) + 
+             lag(d.fl_lf,1) + lag(d.fl_lf,3) + lag(d.fl_lf,4) + lag(d.fl_lf,7) + lag(d.fl_lf,8) + lag(d.fl_lf,11) +
+             lag(d.us_epr,1) + lag(d.us_epr,2) + lag(d.us_epr,3) + lag(d.us_epr,4) + lag(d.us_epr,5) + 
+             lag(d.us_epr,6) + lag(d.us_epr,7) + lag(d.us_epr,8) + lag(d.us_epr,9) + lag(d.us_epr,10) +
+             lag(d.fl_bp,1) + lag(d.fl_bp,2)  + lag(d.fl_bp,3) + lag(d.fl_bp,4)  + lag(d.fl_bp,5) +
+             lag(d.fl_bp,6) + lag(d.fl_bp,7)  + lag(d.fl_bp,8)  + lag(d.fl_bp,9)  + lag(d.fl_bp,12) +
+             YearMonth)
+)
+
+ga_fc_2020 <- forecast(rw_model_2020, new_data = test_set_2020)
+
+#Plotting Predictions
+autoplot(ga_fc_2020, data = train_set_2019[300:360,], level = c(68, 95, 99.7), colour = "darkblue") +
+  ggtitle("Forecast: L.Differenced Nonfarm Employment from GA model: Jan 2020") +
+  xlab("Months") +
+  ylab("Nonfarm")
+```
+
+
+
+
+```{r P8 and P9: Point and interval forecasts for 2020 ACTUAL}
+rw_model_2020_2 <- train_set_2019 %>% model(
+  ga_ardl = TSLM(fl_nonfarm~ lag(d.fl_nonfarm,1)  + lag(d.fl_nonfarm,4) + lag(d.fl_nonfarm,5) + lag(d.fl_nonfarm,8) + 
+             lag(d.fl_nonfarm,9) + lag(d.fl_nonfarm,10) + lag(d.fl_nonfarm,11) + lag(d.fl_nonfarm,12) + 
+             lag(d.fl_lf,1) + lag(d.fl_lf,3) + lag(d.fl_lf,4) + lag(d.fl_lf,7) + lag(d.fl_lf,8) + lag(d.fl_lf,11) +
+             lag(d.us_epr,1) + lag(d.us_epr,2) + lag(d.us_epr,3) + lag(d.us_epr,4) + lag(d.us_epr,5) + 
+             lag(d.us_epr,6) + lag(d.us_epr,7) + lag(d.us_epr,8) + lag(d.us_epr,9) + lag(d.us_epr,10) +
+             lag(d.fl_bp,1) + lag(d.fl_bp,2)  + lag(d.fl_bp,3) + lag(d.fl_bp,4)  + lag(d.fl_bp,5) +
+             lag(d.fl_bp,6) + lag(d.fl_bp,7)  + lag(d.fl_bp,8)  + lag(d.fl_bp,9)  + lag(d.fl_bp,12) +
+             YearMonth)
+)
+
+ga_fc_2020_2 <- forecast(rw_model_2020_2, new_data = test_set_2020)
+
+#Plotting Predictions
+autoplot(ga_fc_2020_2, data = data_ts[200:361,], level = c(68, 95, 99.7), colour = "darkred") +
+  ggtitle("Forecast for Nonfarm Employment from GA model: Jan 2020") +
+  xlab("Months") +
+  ylab("Nonfarm")
+```
+
+```{r P9: Interval forecasts for ACTUAL nonfarm 2020 w/ Empirical Method}
+rw_model_2020_3 <- train_set_2019 %>% model(
+  ga_ardl = TSLM(fl_nonfarm~ lag(d.fl_nonfarm,1)  + lag(d.fl_nonfarm,4) + lag(d.fl_nonfarm,5) + lag(d.fl_nonfarm,8) + 
+             lag(d.fl_nonfarm,9) + lag(d.fl_nonfarm,10) + lag(d.fl_nonfarm,11) + lag(d.fl_nonfarm,12) + 
+             lag(d.fl_lf,1) + lag(d.fl_lf,3) + lag(d.fl_lf,4) + lag(d.fl_lf,7) + lag(d.fl_lf,8) + lag(d.fl_lf,11) +
+             lag(d.us_epr,1) + lag(d.us_epr,2) + lag(d.us_epr,3) + lag(d.us_epr,4) + lag(d.us_epr,5) + 
+             lag(d.us_epr,6) + lag(d.us_epr,7) + lag(d.us_epr,8) + lag(d.us_epr,9) + lag(d.us_epr,10) +
+             lag(d.fl_bp,1) + lag(d.fl_bp,2)  + lag(d.fl_bp,3) + lag(d.fl_bp,4)  + lag(d.fl_bp,5) +
+             lag(d.fl_bp,6) + lag(d.fl_bp,7)  + lag(d.fl_bp,8)  + lag(d.fl_bp,9)  + lag(d.fl_bp,12) +
+             YearMonth)
+)
+
+ga_fc_2020_3 <- forecast(rw_model_2020_3, new_data = test_set_2020)
+
+# #For loop to grab the upper bounds for empirical approach
+# for(i in 1:nrow(hilo(ga_fc_2020_3, 97.5)['97.5%'])){
+#   
+#   emp_bounds[i,] <- hilo(ga_fc_2020_3, 97.5)['97.5%'][[1]][[i]]
+# }
+# 
+# #setting the upper and lower bounds empirically
+# upbd <- exp(data_ts[349:361,5] + emp_bounds[,2])
+# lwbd <- exp(data_ts[349:361,5] + emp_bounds[,1])
+
+
+#Plotting Predictions
+autoplot(ga_fc_2020_2, data = data_ts[200:361,], level = c(97.5), colour = "orange") +
+  ggtitle("Forecast for Nonfarm Employment (Empirical) from GA model: Jan 2020") +
+  xlab("Months") +
+  ylab("Nonfarm") +
+  theme(legend.position = "none")
+```
+
+
+# Which is better? 
+
 
 ```{r Forecasting with 4 different Models, out.width="100%", out.height="60%"}
 #building the models
@@ -113,35 +383,30 @@ test_set <- data_ts[253:264,]
           lag(d.fl_nonfarm,12) + lag(d.fl_lf,1) + lag(d.fl_lf,2) +
           lag(d.us_epr,1) + lag(d.us_epr,2) +
           lag(d.fl_bp,1) + lag(d.fl_bp,2)  +
-          YearMonth ),
+          YearMonth),
+   ga_ardl = TSLM(d.fl_nonfarm ~ lag(d.fl_nonfarm,1)  + lag(d.fl_nonfarm,4) + lag(d.fl_nonfarm,5) + lag(d.fl_nonfarm,8) + 
+             lag(d.fl_nonfarm,9) + lag(d.fl_nonfarm,10) + lag(d.fl_nonfarm,11) + lag(d.fl_nonfarm,12) + 
+             lag(d.fl_lf,1) + lag(d.fl_lf,3) + lag(d.fl_lf,4) + lag(d.fl_lf,7) + lag(d.fl_lf,8) + lag(d.fl_lf,11) +
+             lag(d.us_epr,1) + lag(d.us_epr,2) + lag(d.us_epr,3) + lag(d.us_epr,4) + lag(d.us_epr,5) + 
+             lag(d.us_epr,6) + lag(d.us_epr,7) + lag(d.us_epr,8) + lag(d.us_epr,9) + lag(d.us_epr,10) +
+             lag(d.fl_bp,1) + lag(d.fl_bp,2)  + lag(d.fl_bp,3) + lag(d.fl_bp,4)  + lag(d.fl_bp,5) +
+             lag(d.fl_bp,6) + lag(d.fl_bp,7)  + lag(d.fl_bp,8)  + lag(d.fl_bp,9)  + lag(d.fl_bp,12) +
+             YearMonth),
+   
    arima = ARIMA(d.fl_nonfarm),
-   var = VAR(d.fl_nonfarm ~ AR(1:12), ic = "aic" )
-   # levi = TSLM(d.fl_nonfarm ~ lag(d.fl_nonfarm,1) + lag(d.fl_nonfarm,2) + lag(d.fl_nonfarm,3) + lag(d.fl_nonfarm,4) + lag(d.fl_nonfarm,5) +
-   #               lag(d.fl_nonfarm,6) + lag(d.fl_nonfarm,7) + lag(d.fl_nonfarm,8) + lag(d.fl_nonfarm,9) + lag(d.fl_nonfarm,10) +
-   #               lag(d.fl_nonfarm,11)+ lag(d.fl_nonfarm,12) + lag(d.fl_nonfarm,24)+ lag(d.fl_lf,1) + lag(d.fl_lf,2) + lag(d.fl_lf,3) +
-   #               lag(d.fl_lf,4) + lag(d.fl_lf,5) + lag(d.fl_lf,6) + lag(d.fl_lf,7) + lag(d.fl_lf,8) + lag(d.fl_lf,9) + lag(d.fl_lf,10) +
-   #               lag(d.fl_lf,11)+ lag(d.fl_lf,12) + lag(d.fl_lf,24) + lag(d.us_epr,1) + lag(d.us_epr,2) + lag(d.us_epr,3) + lag(d.us_epr,4) +
-   #               lag(d.us_epr,5) + lag(d.us_epr,6) + lag(d.us_epr,7) + lag(d.us_epr,8) + lag(d.us_epr,9) + lag(d.us_epr,10) + lag(d.us_epr,11)+
-   #               lag(d.us_epr,12) + lag(d.us_epr,24) + lag(d.fl_bp,1) + lag(d.fl_bp,2) + lag(d.fl_bp,3) + lag(d.fl_bp,4) + lag(d.fl_bp,5) +
-   #               lag(d.fl_bp,6) + lag(d.fl_bp,7) + lag(d.fl_bp,8) + lag(d.fl_bp,9) + lag(d.fl_bp,10) + lag(d.fl_bp,11)+ lag(d.fl_bp,12) +
-   #               lag(d.fl_bp, 24) +
-   #               YearMonth)
+   var = VAR(d.fl_nonfarm  ~ AR(1:12) , ic = "aic" )
    )
 
 # forecasting on the test set 
-fc <- forecast(model_1, new_data = test_set)
+fc <- forecast(model_1, new_data = test_set_2020)
 
 #Plotting Predictions
-autoplot(fc, data = train_set, level = NULL) +
-  ggtitle("Forecast for Nonfarm Employment") +
+autoplot(fc, data = data_ts[300:361,], level = NULL) +
+  ggtitle("Forecasts for Nonfarm Employment (4 Models)") +
   xlab("Months") +
-  guides(colour = guide_legend(title = "Forecast"))
+  guides(colour = guide_legend(title = "Forecast")) +
+  theme(legend.position = "bottom")
 ```
-
-```{r}
-accuracy(fc, test_set) %>%  kable()
-```
-
 
 ```{r Evaluating Accuracy}
 fc_accuracy <- accuracy(fc, test_set,
@@ -152,7 +417,7 @@ fc_accuracy <- accuracy(fc, test_set,
   )
 )
 
-
+#creating an accuracy table
 fc_accuracy %>%
   group_by(.model) %>%
   summarise(
