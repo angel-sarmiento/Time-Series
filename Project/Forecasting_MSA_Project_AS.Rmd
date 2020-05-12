@@ -4,8 +4,8 @@ author: "Angel Sarmiento"
 date: "3/18/2020"
 output: pdf_document
 editor_options: 
-  chunk_output_type: inline
   
+  chunk_output_type: inline
 abstract: "This investigation follows the process of analysing time series data, augmenting and transforming that data for   prediction, selecting subsets of a possible model to represent that data, and then using that model to forecast future values of an MSA's total nonfarm employment. The data is differenced, transformed, and wrangled to allow understanding into what lag structures are significant. Best subset selection with models like GLMNET and Genetic Algorithm help to find the best lag structures. Out of sample predictions and rolling window forecasting predictions allow for a comparison to be drawn between those models' predictive ability. The best models were the glmnet/lasso model and the Dynamic Autoregression model, which had the lowest RMSE. Given this info, these models were selected for forecasting a future unknown value of nonfarm employment (March 2020). These well-performing models predicted a decrease in employment from the previous month to 2738.83 for glmnet and 2734.812 for the DAR model. Predictions were also made for Average weekly earnings. " 
 ---
 
